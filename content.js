@@ -5,8 +5,9 @@
  */
 
 (() => {
-  if (window.__HANDDY_INJECTED__) return;
-  window.__HANDDY_INJECTED__ = true;
+  if (typeof window.__HANDDY_CLEANUP__ === "function") {
+    try { window.__HANDDY_CLEANUP__(); } catch (_) {}
+  }
 
   // Remove any stale host left over from a previous extension reload
   document.querySelectorAll("#handflow-extension-host, #handdy-extension-host, #handdy-extension-host").forEach(el => el.remove());
@@ -695,7 +696,7 @@
     if (!cameraIframe.contentWindow) return;
     cameraIframe.contentWindow.postMessage(
       {
-        target: 'Handdy_CAMERA_FRAME',
+        target: 'HANDDY_CAMERA_FRAME',
         command,
         ...extra
       },
@@ -737,7 +738,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return false;
 
-    if (msg.type === 'PING_Handdy') {
+    if (msg.type === 'PING_HANDDY') {
       sendResponse({ alive: true });
       return false;
     }
@@ -796,9 +797,9 @@
   });
 
   // Listen for direct postMessage from embedded camera_frame.html
-  window.addEventListener('message', (event) => {
+  function onWindowMessage(event) {
     const data = event.data;
-    if (!data || data.source !== 'Handdy_CAMERA_FRAME') return;
+    if (!data || data.source !== 'HANDDY_CAMERA_FRAME') return;
     if (sidePanelActive) return;
 
     if (data.type === 'HAND_FRAME' && data.payload) {
@@ -806,7 +807,15 @@
     } else if (data.type === 'HAND_LOST') {
       setPointerIdle();
     }
-  });
+  }
+  window.addEventListener("message", onWindowMessage);
+
+  window.__HANDDY_CLEANUP__ = () => {
+    window.removeEventListener("message", onWindowMessage);
+    document.removeEventListener("fullscreenchange", mountHost);
+    window.removeEventListener("resize", resizeTrailCanvas);
+    host.remove();
+  };
 
   function setPointerIdle() {
     cursorEl.classList.add('idle');

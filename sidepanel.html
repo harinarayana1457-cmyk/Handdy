@@ -58,7 +58,12 @@
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
     }
     video {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      pointer-events: none;
+      z-index: -1;
     }
     canvas {
       width: 100%;

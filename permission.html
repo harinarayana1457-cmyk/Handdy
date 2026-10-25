@@ -127,7 +127,12 @@
       border: 1.5px solid rgba(56, 189, 248, 0.35);
     }
     video {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      pointer-events: none;
+      z-index: -1;
     }
     canvas {
       width: 100%;
