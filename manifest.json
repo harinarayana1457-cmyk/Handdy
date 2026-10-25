@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HandFlow — Hand Gesture Mouse & Browser Controller",
   "short_name": "HandFlow",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Live hand-tracked mouse pointer across all Chrome tabs: point, click, drag, scroll, switch tabs, zoom, and control media with hand gestures.",
   "permissions": [
     "storage",
@@ -10,8 +10,7 @@
     "activeTab",
     "scripting",
     "sidePanel",
-    "sessions",
-    "offscreen"
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -62,8 +61,6 @@
       "resources": [
         "camera_frame.html",
         "camera_frame.js",
-        "offscreen.html",
-        "offscreen.js",
         "gesture_engine.js",
         "permission.html",
         "lib/mediapipe/*",

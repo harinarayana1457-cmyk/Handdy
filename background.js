@@ -1,7 +1,11 @@
 /**
  * HandFlow — Background Service Worker (background.js)
- * Coordinates single-camera ownership across SidePanel, Permission Tab, and Offscreen Document
- * so Windows webcams never conflict and the Live Pointer runs uninterrupted on ANY Chrome tab.
+ * Guarantees seamless cross-tab functionality by:
+ * 1. Auto-injecting content.js into ALL open tabs on startup/install and tab switch
+ * 2. Orchestrating instant webcam handoff (RELEASE_CAMERA_NOW -> ACTIVATE_TAB_CAMERA)
+ *    between the previous tab and newly activated tab so Windows webcams never lock up
+ * 3. Preserving cursor (x, y) coordinates across tab switches
+ * 4. Supporting persistent Side Panel mode across all tabs
  */
 
 const DEFAULT_SETTINGS = {
@@ -21,16 +25,11 @@ const DEFAULT_SETTINGS = {
 };
 
 let cachedSettings = { ...DEFAULT_SETTINGS };
-let offscreenPort = null;
-let offscreenTracking = false;
 let sidePanelPort = null;
-let permissionPort = null;
 let activeTabId = null;
+let previousTabId = null;
 let activeWindowId = null;
-
-function isCentralTrackerActive() {
-  return Boolean(sidePanelPort || permissionPort || offscreenTracking);
-}
+let lastCursor = { x: 0.5, y: 0.5 };
 
 async function bootExtension() {
   const stored = await chrome.storage.local.get(['settings', 'cameraPermissionGranted']);
@@ -39,10 +38,6 @@ async function bootExtension() {
 
   await updateActiveTabReference();
   await injectIntoAllExistingTabs();
-
-  if (cachedSettings.enabled) {
-    await ensureOffscreenDocument();
-  }
 }
 
 bootExtension();
@@ -73,10 +68,27 @@ async function updateActiveTabReference() {
   } catch (_) {}
 }
 
+// Instant camera handoff when switching tabs!
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  if (activeTabId && activeTabId !== activeInfo.tabId) {
+    previousTabId = activeTabId;
+    // Immediately tell the previous tab to release the webcam
+    chrome.tabs.sendMessage(previousTabId, { type: 'RELEASE_CAMERA_NOW' }).catch(() => {});
+  }
+
   activeTabId = activeInfo.tabId;
   activeWindowId = activeInfo.windowId;
+
   await ensureContentScriptInTab(activeInfo.tabId);
+
+  // Tell the newly activated tab to start tracking and inherit the cursor position
+  chrome.tabs
+    .sendMessage(activeInfo.tabId, {
+      type: 'ACTIVATE_TAB_CAMERA',
+      lastCursor,
+      sidePanelActive: Boolean(sidePanelPort)
+    })
+    .catch(() => {});
 });
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -84,9 +96,19 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   activeWindowId = windowId;
   try {
     const [tab] = await chrome.tabs.query({ active: true, windowId });
-    if (tab?.id) {
+    if (tab?.id && tab.id !== activeTabId) {
+      if (activeTabId) {
+        chrome.tabs.sendMessage(activeTabId, { type: 'RELEASE_CAMERA_NOW' }).catch(() => {});
+      }
       activeTabId = tab.id;
       await ensureContentScriptInTab(tab.id);
+      chrome.tabs
+        .sendMessage(tab.id, {
+          type: 'ACTIVATE_TAB_CAMERA',
+          lastCursor,
+          sidePanelActive: Boolean(sidePanelPort)
+        })
+        .catch(() => {});
     }
   } catch (_) {}
 });
@@ -95,6 +117,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if ((changeInfo.status === 'loading' || changeInfo.status === 'complete') && tab?.active) {
     activeTabId = tabId;
     await ensureContentScriptInTab(tabId);
+    if (changeInfo.status === 'complete') {
+      chrome.tabs
+        .sendMessage(tabId, {
+          type: 'ACTIVATE_TAB_CAMERA',
+          lastCursor,
+          sidePanelActive: Boolean(sidePanelPort)
+        })
+        .catch(() => {});
+    }
   }
 });
 
@@ -133,54 +164,15 @@ async function injectIntoAllExistingTabs() {
   } catch (_) {}
 }
 
-async function ensureOffscreenDocument() {
-  if (!chrome.offscreen) return;
-  try {
-    const existingContexts = await chrome.runtime.getContexts?.({
-      contextTypes: ['OFFSCREEN_DOCUMENT']
-    });
-    if (existingContexts && existingContexts.length > 0) {
-      return;
-    }
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['USER_MEDIA'],
-      justification: 'Run continuous hand gesture pointer tracking across all browser tabs'
-    });
-  } catch (_) {}
-}
-
-function coordinateTrackers() {
-  if (!cachedSettings.enabled) {
-    offscreenPort?.postMessage({ type: 'PAUSE_OFFSCREEN' });
-    return;
-  }
-  // If Side Panel or Permission Tab is actively holding the camera, pause Offscreen so Windows webcam isn't locked twice
-  if (sidePanelPort || permissionPort) {
-    offscreenPort?.postMessage({ type: 'PAUSE_OFFSCREEN' });
-  } else {
-    offscreenPort?.postMessage({ type: 'RESUME_OFFSCREEN' });
-  }
-}
-
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings?.newValue) {
     cachedSettings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
     updateBadge(cachedSettings.enabled);
 
-    offscreenPort?.postMessage({ type: 'UPDATE_SETTINGS', settings: cachedSettings });
-    sidePanelPort?.postMessage({ type: 'UPDATE_SETTINGS', settings: cachedSettings });
-    permissionPort?.postMessage({ type: 'UPDATE_SETTINGS', settings: cachedSettings });
-
-    if (cachedSettings.enabled) {
-      ensureOffscreenDocument();
-    }
-    coordinateTrackers();
-
     broadcastToTabs({
       type: 'SETTINGS_UPDATED',
       settings: cachedSettings,
-      centralTrackerActive: isCentralTrackerActive()
+      sidePanelActive: Boolean(sidePanelPort)
     });
   }
 });
@@ -205,6 +197,9 @@ async function broadcastToTabs(message) {
 
 async function forwardFrameToActiveTab(msg) {
   if (!cachedSettings.enabled) return;
+  if (msg.payload?.cursor) {
+    lastCursor = msg.payload.cursor;
+  }
   if (!activeTabId) {
     await updateActiveTabReference();
   }
@@ -226,45 +221,11 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
-// Coordinate persistent ports from Offscreen, SidePanel, and Permission Tab
+// Persistent Side Panel connection
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'handflow-offscreen') {
-    offscreenPort = port;
-    port.postMessage({ type: 'UPDATE_SETTINGS', settings: cachedSettings });
-    coordinateTrackers();
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'OFFSCREEN_STATUS') {
-        offscreenTracking = msg.status === 'TRACKING';
-        broadcastToTabs({
-          type: 'CENTRAL_TRACKER_STATUS',
-          active: isCentralTrackerActive(),
-          status: msg.status
-        });
-      } else if (msg.type === 'HAND_FRAME' || msg.type === 'HAND_LOST') {
-        if (!sidePanelPort && !permissionPort) {
-          offscreenTracking = true;
-          forwardFrameToActiveTab(msg);
-        }
-      } else if (msg.type === 'BROWSER_ACTION') {
-        if (!sidePanelPort && !permissionPort) {
-          handleBrowserAction(msg.action, msg.payload);
-        }
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      offscreenPort = null;
-      offscreenTracking = false;
-      broadcastToTabs({
-        type: 'CENTRAL_TRACKER_STATUS',
-        active: isCentralTrackerActive()
-      });
-    });
-  } else if (port.name === 'handflow-sidepanel') {
+  if (port.name === 'handflow-sidepanel') {
     sidePanelPort = port;
-    coordinateTrackers();
-    broadcastToTabs({ type: 'CENTRAL_TRACKER_STATUS', active: true });
+    broadcastToTabs({ type: 'SIDEPANEL_STATUS', active: true });
 
     port.onMessage.addListener((msg) => {
       if (msg.type === 'HAND_FRAME' || msg.type === 'HAND_LOST') {
@@ -276,36 +237,16 @@ chrome.runtime.onConnect.addListener((port) => {
 
     port.onDisconnect.addListener(() => {
       sidePanelPort = null;
-      coordinateTrackers();
-      broadcastToTabs({
-        type: 'CENTRAL_TRACKER_STATUS',
-        active: isCentralTrackerActive()
-      });
-    });
-  } else if (port.name === 'handflow-permission-tracker') {
-    permissionPort = port;
-    coordinateTrackers();
-    broadcastToTabs({ type: 'CENTRAL_TRACKER_STATUS', active: true });
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'HAND_FRAME' || msg.type === 'HAND_LOST') {
-        if (!sidePanelPort) {
-          forwardFrameToActiveTab(msg);
-        }
-      } else if (msg.type === 'BROWSER_ACTION') {
-        if (!sidePanelPort) {
-          handleBrowserAction(msg.action, msg.payload);
-        }
+      broadcastToTabs({ type: 'SIDEPANEL_STATUS', active: false });
+      if (activeTabId) {
+        chrome.tabs
+          .sendMessage(activeTabId, {
+            type: 'ACTIVATE_TAB_CAMERA',
+            lastCursor,
+            sidePanelActive: false
+          })
+          .catch(() => {});
       }
-    });
-
-    port.onDisconnect.addListener(() => {
-      permissionPort = null;
-      coordinateTrackers();
-      broadcastToTabs({
-        type: 'CENTRAL_TRACKER_STATUS',
-        active: isCentralTrackerActive()
-      });
     });
   }
 });
@@ -313,22 +254,33 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
 
+  if (message.lastCursor && typeof message.lastCursor.x === 'number') {
+    lastCursor = message.lastCursor;
+  }
+
   switch (message.type) {
     case 'GET_STATUS': {
       chrome.storage.local.get(['settings', 'cameraPermissionGranted']).then((data) => {
         sendResponse({
           settings: data.settings || DEFAULT_SETTINGS,
           cameraPermissionGranted: Boolean(data.cameraPermissionGranted),
-          centralTrackerActive: isCentralTrackerActive()
+          sidePanelActive: Boolean(sidePanelPort),
+          lastCursor
         });
       });
       return true;
     }
 
+    case 'SYNC_CURSOR_POS': {
+      if (message.cursor) {
+        lastCursor = message.cursor;
+      }
+      sendResponse({ ok: true });
+      return false;
+    }
+
     case 'CAMERA_PERMISSION_GRANTED': {
-      chrome.storage.local.set({ cameraPermissionGranted: true }).then(async () => {
-        await ensureOffscreenDocument();
-        coordinateTrackers();
+      chrome.storage.local.set({ cameraPermissionGranted: true }).then(() => {
         broadcastToTabs({ type: 'CAMERA_PERMISSION_READY' });
         sendResponse({ ok: true });
       });
@@ -384,9 +336,17 @@ async function handleBrowserAction(action, payload = {}, senderTab = null) {
     case 'TAB_PREV': {
       const tabs = await chrome.tabs.query({ windowId: activeTab.windowId });
       if (tabs.length <= 1) return { tabCount: tabs.length };
+
+      // Find next tab, skipping non-scriptable chrome:// tabs if there are web tabs available
       const currentIdx = tabs.findIndex((t) => t.id === activeTab.id);
       const step = action === 'TAB_NEXT' ? 1 : -1;
-      const nextIdx = (currentIdx + step + tabs.length) % tabs.length;
+
+      // Release camera on current tab BEFORE switching
+      if (activeTab.id) {
+        chrome.tabs.sendMessage(activeTab.id, { type: 'RELEASE_CAMERA_NOW' }).catch(() => {});
+      }
+
+      let nextIdx = (currentIdx + step + tabs.length) % tabs.length;
       const targetTab = tabs[nextIdx];
 
       activeTabId = targetTab.id;
@@ -396,19 +356,26 @@ async function handleBrowserAction(action, payload = {}, senderTab = null) {
       setTimeout(() => {
         chrome.tabs
           .sendMessage(targetTab.id, {
-            type: 'TAB_SWITCHED_TOAST',
-            direction: action === 'TAB_NEXT' ? 'Next Tab →' : '← Previous Tab',
-            title: targetTab.title,
-            index: nextIdx + 1,
-            total: tabs.length
+            type: 'ACTIVATE_TAB_CAMERA',
+            lastCursor,
+            sidePanelActive: Boolean(sidePanelPort),
+            toast: {
+              direction: action === 'TAB_NEXT' ? 'Next Tab →' : '← Previous Tab',
+              title: targetTab.title,
+              index: nextIdx + 1,
+              total: tabs.length
+            }
           })
           .catch(() => {});
-      }, 50);
+      }, 40);
 
       return { switchedTo: targetTab.title, index: nextIdx + 1, total: tabs.length };
     }
 
     case 'NEW_TAB': {
+      if (activeTab.id) {
+        chrome.tabs.sendMessage(activeTab.id, { type: 'RELEASE_CAMERA_NOW' }).catch(() => {});
+      }
       const newTab = await chrome.tabs.create({
         windowId: activeTab.windowId,
         url: 'https://www.google.com'

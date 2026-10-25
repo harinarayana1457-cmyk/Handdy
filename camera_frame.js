@@ -1,6 +1,7 @@
 /**
  * HandFlow — In-Page Extension Camera Frame (camera_frame.js)
- * Runs MediaPipe HandLandmarker locally inside chrome-extension:// origin.
+ * Pre-warms MediaPipe in every tab and performs instant webcam handoff + auto-retry
+ * when switching across tabs in Chrome.
  */
 
 import { FilesetResolver, HandLandmarker } from './lib/mediapipe/vision_bundle.mjs';
@@ -16,19 +17,22 @@ const permissionOverlay = document.getElementById('permissionOverlay');
 const grantBtn = document.getElementById('grantBtn');
 
 const HAND_CONNECTIONS = [
-  [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
-  [0, 5], [5, 6], [6, 7], [7, 8],       // Index
-  [5, 9], [9, 10], [10, 11], [11, 12],  // Middle
-  [9, 13], [13, 14], [14, 15], [15, 16],// Ring
-  [13, 17], [17, 18], [18, 19], [19, 20], // Pinky
-  [0, 17]                                // Palm base
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [17, 18], [18, 19], [19, 20],
+  [0, 17]
 ];
 
 let handLandmarker = null;
+let initPromise = null;
 let stream = null;
 let animFrameId = null;
+let retryTimer = null;
 let isRunning = false;
-let isPausedByParent = false;
+let isStarting = false;
+let isPausedByParent = document.hidden;
 let lastVideoTime = -1;
 let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
@@ -53,13 +57,29 @@ chrome.storage.onChanged.addListener((changes, area) => {
     engine.updateSettings(settings);
     if (!settings.enabled) {
       stopCamera();
-    } else if (!isPausedByParent && !isRunning) {
-      startCamera();
+    } else if (!isPausedByParent && !document.hidden && !isRunning) {
+      startCamera(0);
     }
   }
 });
 
-// Listen for pause/resume signals from parent content.js (e.g. when tab is hidden or Side Panel is active)
+// Listen for visibility changes directly inside the iframe as well as messages from parent content.js
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopCamera();
+  } else if (!isPausedByParent && settings.enabled) {
+    startCamera(0);
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  stopCamera();
+});
+
+window.addEventListener('beforeunload', () => {
+  stopCamera();
+});
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg || msg.target !== 'HANDFLOW_CAMERA_FRAME') return;
@@ -69,58 +89,83 @@ window.addEventListener('message', (event) => {
     stopCamera();
   } else if (msg.command === 'RESUME_CAMERA') {
     isPausedByParent = false;
-    if (settings.enabled && !isRunning) {
-      startCamera();
+    if (msg.lastCursor && typeof msg.lastCursor.x === 'number') {
+      engine.cursorX = msg.lastCursor.x;
+      engine.cursorY = msg.lastCursor.y;
     }
+    if (settings.enabled && !isRunning) {
+      startCamera(0);
+    }
+  } else if (msg.command === 'SYNC_CURSOR' && msg.lastCursor) {
+    engine.cursorX = msg.lastCursor.x;
+    engine.cursorY = msg.lastCursor.y;
   }
 });
 
 async function initMediaPipe() {
   if (handLandmarker) return handLandmarker;
-  statusText.textContent = 'Loading AI...';
+  if (initPromise) return initPromise;
 
-  const wasmPath = chrome.runtime.getURL('lib/mediapipe/wasm');
-  const modelPath = chrome.runtime.getURL('models/hand_landmarker.task');
+  initPromise = (async () => {
+    statusText.textContent = 'Loading AI...';
+    const wasmPath = chrome.runtime.getURL('lib/mediapipe/wasm');
+    const modelPath = chrome.runtime.getURL('models/hand_landmarker.task');
 
-  const vision = await FilesetResolver.forVisionTasks(wasmPath);
-  try {
-    handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: modelPath,
-        delegate: 'GPU'
-      },
-      runningMode: 'VIDEO',
-      numHands: 1,
-      minHandDetectionConfidence: 0.55,
-      minHandPresenceConfidence: 0.55,
-      minTrackingConfidence: 0.55
-    });
-  } catch (gpuErr) {
-    // Fallback to CPU if GPU WebGL context fails
-    handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: modelPath,
-        delegate: 'CPU'
-      },
-      runningMode: 'VIDEO',
-      numHands: 1,
-      minHandDetectionConfidence: 0.55,
-      minHandPresenceConfidence: 0.55,
-      minTrackingConfidence: 0.55
-    });
-  }
-  return handLandmarker;
+    const vision = await FilesetResolver.forVisionTasks(wasmPath);
+    try {
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: modelPath,
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 1,
+        minHandDetectionConfidence: 0.52,
+        minHandPresenceConfidence: 0.52,
+        minTrackingConfidence: 0.52
+      });
+    } catch (_) {
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: modelPath,
+          delegate: 'CPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 1,
+        minHandDetectionConfidence: 0.52,
+        minHandPresenceConfidence: 0.52,
+        minTrackingConfidence: 0.52
+      });
+    }
+    return handLandmarker;
+  })();
+
+  return initPromise;
 }
 
-async function startCamera() {
-  if (isRunning || isPausedByParent || !settings.enabled) return;
-  isRunning = true;
+async function startCamera(retryCount = 0) {
+  if (isRunning || isStarting || isPausedByParent || document.hidden || !settings.enabled) {
+    return;
+  }
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  isStarting = true;
 
   try {
     await initMediaPipe();
-    statusText.textContent = 'Opening Cam...';
 
-    stream = await navigator.mediaDevices.getUserMedia({
+    // Check again in case tab became hidden while MediaPipe was loading
+    if (isPausedByParent || document.hidden || !settings.enabled) {
+      isStarting = false;
+      return;
+    }
+
+    statusText.textContent = retryCount > 0 ? `Connecting (${retryCount})...` : 'Opening Cam...';
+
+    const newStream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 320 },
         height: { ideal: 240 },
@@ -129,18 +174,30 @@ async function startCamera() {
       audio: false
     });
 
+    // If tab was hidden while awaiting getUserMedia, release immediately!
+    if (isPausedByParent || document.hidden || !settings.enabled) {
+      newStream.getTracks().forEach((t) => t.stop());
+      isStarting = false;
+      return;
+    }
+
+    stream = newStream;
     permissionOverlay.classList.remove('visible');
     video.srcObject = stream;
     await video.play();
 
+    isStarting = false;
+    isRunning = true;
     statusDot.className = 'dot active';
-    statusText.textContent = 'Tracking';
+    statusText.textContent = 'Live Tracking';
     lastVideoTime = -1;
     renderLoop();
   } catch (err) {
+    isStarting = false;
     isRunning = false;
-    statusDot.className = 'dot error';
+
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      statusDot.className = 'dot error';
       statusText.textContent = 'Need Access';
       permissionOverlay.classList.add('visible');
       window.parent.postMessage(
@@ -150,26 +207,41 @@ async function startCamera() {
         },
         '*'
       );
+    } else if (retryCount < 25 && !isPausedByParent && !document.hidden && settings.enabled) {
+      // Camera is being handed off from the previous tab; auto-retry in 180ms!
+      statusDot.className = 'dot';
+      statusText.textContent = 'Switching Tab...';
+      retryTimer = setTimeout(() => startCamera(retryCount + 1), 180);
     } else {
-      statusText.textContent = 'Cam Busy/Err';
+      statusDot.className = 'dot error';
+      statusText.textContent = 'Cam Busy';
     }
   }
 }
 
 function stopCamera() {
   isRunning = false;
+  isStarting = false;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   if (animFrameId) {
     cancelAnimationFrame(animFrameId);
     animFrameId = null;
   }
   if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
+    try {
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (_) {}
     stream = null;
   }
-  video.srcObject = null;
+  if (video.srcObject) {
+    video.srcObject = null;
+  }
   statusDot.className = 'dot';
-  statusText.textContent = 'Paused';
-  posturePill.textContent = 'PAUSED';
+  statusText.textContent = 'Standby';
+  posturePill.textContent = 'STANDBY';
 }
 
 function drawScene(landmarks, result) {
@@ -177,7 +249,6 @@ function drawScene(landmarks, result) {
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // Draw mirrored webcam feed
   ctx.save();
   if (settings.mirrorCamera) {
     ctx.translate(w, 0);
@@ -188,11 +259,9 @@ function drawScene(landmarks, result) {
   }
   ctx.restore();
 
-  // Darken slightly for high-contrast skeleton visibility
   ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
   ctx.fillRect(0, 0, w, h);
 
-  // Draw active sensitivity bounding box
   const sens = Math.max(0.6, Math.min(2.5, settings.sensitivity || 1.35));
   const span = Math.min(0.92, Math.max(0.32, 0.85 / sens));
   const bx = ((1.0 - span) / 2) * w;
@@ -211,7 +280,6 @@ function drawScene(landmarks, result) {
   const mapX = (x) => (settings.mirrorCamera ? (1.0 - x) * w : x * w);
   const mapY = (y) => y * h;
 
-  // Draw skeleton connections
   ctx.strokeStyle = result.isPinching ? '#f43f5e' : result.isScrolling ? '#06b6d4' : '#6366f1';
   ctx.lineWidth = 2.2;
   ctx.beginPath();
@@ -223,7 +291,6 @@ function drawScene(landmarks, result) {
   }
   ctx.stroke();
 
-  // Draw joints
   for (let i = 0; i < landmarks.length; i++) {
     const pt = landmarks[i];
     const px = mapX(pt.x);
@@ -243,7 +310,6 @@ function drawScene(landmarks, result) {
     ctx.fill();
   }
 
-  // Draw pinch line between thumb tip [4] and index tip [8]
   if (result.pinchRatio < 1.35) {
     ctx.beginPath();
     ctx.moveTo(mapX(landmarks[4].x), mapY(landmarks[4].y));
@@ -257,6 +323,11 @@ function drawScene(landmarks, result) {
 function renderLoop() {
   if (!isRunning) return;
 
+  if (document.hidden || isPausedByParent) {
+    stopCamera();
+    return;
+  }
+
   const now = performance.now();
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
@@ -269,7 +340,12 @@ function renderLoop() {
         posturePill.textContent = result.posture;
         drawScene(hand, result);
 
-        // Send frame to parent content script
+        // If a tab switch gesture was triggered, release our webcam immediately BEFORE switching tabs
+        // so the target tab can open the webcam with zero contention!
+        const hasTabSwitch = (result.events || []).some(
+          (e) => e.type === 'TAB_NEXT' || e.type === 'TAB_PREV'
+        );
+
         window.parent.postMessage(
           {
             source: 'HANDFLOW_CAMERA_FRAME',
@@ -278,6 +354,11 @@ function renderLoop() {
           },
           '*'
         );
+
+        if (hasTabSwitch) {
+          stopCamera();
+          return;
+        }
       } else {
         posturePill.textContent = 'NO HAND';
         drawScene(null, { isPinching: false, isScrolling: false });
@@ -295,9 +376,10 @@ function renderLoop() {
   animFrameId = requestAnimationFrame(renderLoop);
 }
 
-// Initialize
+// Pre-warm MediaPipe immediately and start camera if visible
+initMediaPipe();
 loadSettings().then(() => {
-  if (settings.enabled && !isPausedByParent) {
-    startCamera();
+  if (settings.enabled && !isPausedByParent && !document.hidden) {
+    startCamera(0);
   }
 });

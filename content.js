@@ -1,7 +1,7 @@
 /**
- * HandFlow — Universal Live Pointer & Gesture Content Script (content.js)
- * Renders an always-on, high-visibility Live Pointer + Trail + Skeleton HUD on ANY Chrome tab,
- * even on already-open tabs and inside Fullscreen video players.
+ * HandFlow — Universal Cross-Tab Live Pointer & Gesture Content Script (content.js)
+ * Renders an always-on, high-visibility Live Pointer + Trail + Camera HUD on ANY Chrome tab,
+ * with instant webcam handoff and cursor position continuity across tab switches.
  */
 
 (() => {
@@ -52,15 +52,18 @@
     hudPosition: 'bottom-right'
   };
 
-  let centralTrackerActive = false;
-  let lastCentralFrameTime = 0;
+  let sidePanelActive = false;
   let hudMinimized = false;
   let radialMenuOpen = false;
   let radialMenuCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
-  // Live Pointer state in viewport coordinates
+  // Live Pointer state in normalized [0..1] and viewport [px] coordinates
+  let normX = 0.5;
+  let normY = 0.5;
   let screenX = window.innerWidth * 0.5;
   let screenY = window.innerHeight * 0.5;
+  let lastSyncTime = 0;
+
   let currentSnapTarget = null;
   let lastHoveredElement = null;
   let dragTarget = null;
@@ -90,7 +93,6 @@
         user-select: none;
       }
 
-      /* Smooth Pointer Trail Canvas */
       #trailCanvas {
         position: fixed;
         inset: 0;
@@ -116,7 +118,6 @@
         display: none !important;
       }
 
-      /* Outer Cyber Target Ring centered at tip (0,0) */
       .hf-cursor-ring {
         position: absolute;
         top: -18px;
@@ -130,7 +131,6 @@
         transition: transform 0.1s ease, border-color 0.12s ease, background 0.12s ease;
       }
 
-      /* Crisp SVG Mouse Arrow whose tip is at (0,0) */
       .hf-cursor-arrow {
         position: absolute;
         top: -2px;
@@ -142,13 +142,13 @@
       }
 
       .hf-cursor.idle .hf-cursor-ring {
-        border-color: rgba(148, 163, 184, 0.75);
+        border-color: rgba(56, 189, 248, 0.75);
         background: rgba(15, 23, 42, 0.35);
-        box-shadow: 0 0 12px rgba(148, 163, 184, 0.4);
-        animation: hf-idle-pulse 2s infinite ease-in-out;
+        box-shadow: 0 0 14px rgba(56, 189, 248, 0.45);
+        animation: hf-idle-pulse 1.8s infinite ease-in-out;
       }
       @keyframes hf-idle-pulse {
-        0%, 100% { transform: scale(0.95); opacity: 0.75; }
+        0%, 100% { transform: scale(0.95); opacity: 0.8; }
         50% { transform: scale(1.12); opacity: 1; }
       }
 
@@ -180,7 +180,6 @@
         background: rgba(245, 158, 11, 0.22);
       }
 
-      /* Posture Label Attached to Cursor */
       .hf-cursor-label {
         position: absolute;
         left: 24px;
@@ -197,7 +196,6 @@
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
       }
 
-      /* Progress Ring SVG on Cursor */
       .hf-progress-svg {
         position: absolute;
         top: -22px;
@@ -216,7 +214,6 @@
         stroke-linecap: round;
       }
 
-      /* Magnetic Hover Highlight Ring */
       .hf-snap-highlight {
         position: fixed;
         pointer-events: none;
@@ -232,7 +229,6 @@
         display: block;
       }
 
-      /* Click Ripple Effect */
       .hf-ripple {
         position: fixed;
         width: 18px;
@@ -250,7 +246,6 @@
         100% { transform: scale(3.6); opacity: 0; }
       }
 
-      /* Scroll Anchor Indicator */
       .hf-scroll-anchor {
         position: fixed;
         width: 48px;
@@ -273,7 +268,6 @@
         display: flex;
       }
 
-      /* Top-Center Gesture Toast Notification */
       .hf-toast {
         position: fixed;
         top: 20px;
@@ -298,7 +292,6 @@
         transform: translateX(-50%) translateY(0);
       }
 
-      /* Quick Action Radial Wheel Menu */
       .hf-radial-menu {
         position: fixed;
         width: 280px;
@@ -366,8 +359,8 @@
       /* Mini Camera / Skeleton HUD Dock */
       .hf-camera-dock {
         position: fixed;
-        width: 200px;
-        height: 158px;
+        width: 210px;
+        height: 168px;
         background: #0f172a;
         border-radius: 14px;
         border: 1.5px solid rgba(56, 189, 248, 0.45);
@@ -467,21 +460,14 @@
       }
     </style>
 
-    <!-- Pointer Trail Canvas -->
     <canvas id="trailCanvas"></canvas>
-
-    <!-- Magnetic Target Highlight -->
     <div id="snapHighlight" class="hf-snap-highlight"></div>
-
-    <!-- Scroll Anchor -->
     <div id="scrollAnchor" class="hf-scroll-anchor">⇅</div>
 
-    <!-- Quick Action Radial Wheel -->
     <div id="radialMenu" class="hf-radial-menu">
       <div id="radialClose" class="hf-radial-center" data-radial-action="CLOSE_MENU">Close<br/>✕</div>
     </div>
 
-    <!-- Always-Visible Live Hand Pointer -->
     <div id="cursor" class="hf-cursor idle">
       <div class="hf-cursor-ring"></div>
       <svg class="hf-progress-svg" viewBox="0 0 42 42">
@@ -493,15 +479,13 @@
       <div id="cursorLabel" class="hf-cursor-label">SHOW HAND 🖐️</div>
     </div>
 
-    <!-- Toast Notification -->
     <div id="toast" class="hf-toast"></div>
 
-    <!-- Mini Camera / Skeleton HUD Dock -->
     <div id="cameraDock" class="hf-camera-dock pos-bottom-right">
       <div class="hf-dock-header">
         <div class="hf-dock-title">
           <span class="hf-live-dot"></span>
-          <span id="dockTitleText">HandFlow Live</span>
+          <span>HandFlow Live</span>
         </div>
         <div class="hf-dock-actions">
           <button id="cornerBtn" class="hf-dock-btn" title="Move Corner">✥</button>
@@ -510,7 +494,7 @@
         </div>
       </div>
       <div class="hf-dock-body">
-        <canvas id="hudSkeletonCanvas" width="200" height="130"></canvas>
+        <canvas id="hudSkeletonCanvas" width="210" height="140"></canvas>
         <iframe id="cameraIframe" class="hf-camera-iframe" allow="camera; microphone"></iframe>
       </div>
     </div>
@@ -549,10 +533,16 @@
   resizeTrailCanvas();
   window.addEventListener('resize', resizeTrailCanvas);
 
-  // Position initial pointer at center of window
-  cursorEl.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
+  function setCursorFromNormalized(nx, ny) {
+    normX = nx;
+    normY = ny;
+    screenX = normX * window.innerWidth;
+    screenY = normY * window.innerHeight;
+    cursorEl.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
+  }
 
-  // Build Radial Menu Items
+  setCursorFromNormalized(0.5, 0.5);
+
   const RADIAL_ACTIONS = [
     { id: 'BACK', label: '← Back', angle: 180 },
     { id: 'TAB_PREV', label: '⏮ Prev Tab', angle: 225 },
@@ -580,9 +570,7 @@
     radialMenuEl.appendChild(btn);
   });
 
-  shadow.getElementById('radialClose').addEventListener('click', () => {
-    closeRadialMenu();
-  });
+  shadow.getElementById('radialClose').addEventListener('click', closeRadialMenu);
 
   minimizeBtn.addEventListener('click', () => {
     hudMinimized = !hudMinimized;
@@ -614,11 +602,8 @@
       cameraDockEl.classList.remove('hidden');
     }
 
-    // If central tracker (Offscreen or SidePanel) is streaming frames, show lightweight skeleton canvas
-    // and pause duplicate iframe camera!
-    const useCentralCanvas = centralTrackerActive && Date.now() - lastCentralFrameTime < 2500;
-    hudSkeletonCanvas.classList.toggle('active', useCentralCanvas);
-    cameraIframe.classList.toggle('hidden-iframe', useCentralCanvas);
+    hudSkeletonCanvas.classList.toggle('active', sidePanelActive);
+    cameraIframe.classList.toggle('hidden-iframe', sidePanelActive);
   }
 
   function drawHudSkeleton(landmarks, frame) {
@@ -630,7 +615,7 @@
       hudSkeletonCtx.fillStyle = '#94a3b8';
       hudSkeletonCtx.font = '600 11px sans-serif';
       hudSkeletonCtx.textAlign = 'center';
-      hudSkeletonCtx.fillText('Show hand in front of camera', w / 2, h / 2);
+      hudSkeletonCtx.fillText('Side Panel Tracking Active', w / 2, h / 2);
       return;
     }
 
@@ -703,41 +688,49 @@
     setTimeout(() => ripple.remove(), 500);
   }
 
-  // Initialize fallback camera iframe (avoid nesting on permission.html itself)
-  if (!window.location.href.includes('permission.html')) {
-    cameraIframe.src = chrome.runtime.getURL('camera_frame.html');
-  }
-
-  // Sync status with background service worker
-  chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
-    if (chrome.runtime.lastError || !res) return;
-    settings = { ...settings, ...(res.settings || {}) };
-    centralTrackerActive = Boolean(res.centralTrackerActive);
-    if (centralTrackerActive) {
-      lastCentralFrameTime = Date.now();
-    }
-    updateDockAppearance();
-    syncCameraFrameState();
-  });
-
-  function syncCameraFrameState() {
+  function sendCameraCommand(command, extra = {}) {
     if (!cameraIframe.contentWindow) return;
-    const shouldPause =
-      !settings.enabled ||
-      (centralTrackerActive && Date.now() - lastCentralFrameTime < 2500) ||
-      document.hidden;
     cameraIframe.contentWindow.postMessage(
       {
         target: 'HANDFLOW_CAMERA_FRAME',
-        command: shouldPause ? 'PAUSE_CAMERA' : 'RESUME_CAMERA'
+        command,
+        ...extra
       },
       '*'
     );
   }
 
-  document.addEventListener('visibilitychange', syncCameraFrameState);
+  function syncCameraFrameState() {
+    const shouldPause = !settings.enabled || sidePanelActive || document.hidden;
+    sendCameraCommand(shouldPause ? 'PAUSE_CAMERA' : 'RESUME_CAMERA', {
+      lastCursor: { x: normX, y: normY }
+    });
+  }
 
-  // Listen for messages from Background / Offscreen / SidePanel
+  // Load camera_frame.html inside the dock
+  if (!window.location.href.includes('permission.html')) {
+    cameraIframe.addEventListener('load', () => {
+      syncCameraFrameState();
+    });
+    cameraIframe.src = chrome.runtime.getURL('camera_frame.html');
+  }
+
+  chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
+    if (chrome.runtime.lastError || !res) return;
+    settings = { ...settings, ...(res.settings || {}) };
+    sidePanelActive = Boolean(res.sidePanelActive);
+    if (res.lastCursor && typeof res.lastCursor.x === 'number') {
+      setCursorFromNormalized(res.lastCursor.x, res.lastCursor.y);
+    }
+    updateDockAppearance();
+    syncCameraFrameState();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    syncCameraFrameState();
+  });
+
+  // Listen for tab handoff & frame messages from Background / SidePanel
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return false;
 
@@ -746,16 +739,38 @@
       return false;
     }
 
+    if (msg.type === 'RELEASE_CAMERA_NOW') {
+      sendCameraCommand('PAUSE_CAMERA');
+      return false;
+    }
+
+    if (msg.type === 'ACTIVATE_TAB_CAMERA') {
+      mountHost();
+      if (typeof msg.sidePanelActive === 'boolean') {
+        sidePanelActive = msg.sidePanelActive;
+      }
+      if (msg.lastCursor && typeof msg.lastCursor.x === 'number') {
+        setCursorFromNormalized(msg.lastCursor.x, msg.lastCursor.y);
+      }
+      if (msg.toast) {
+        showToast(`${msg.toast.direction} (${msg.toast.index}/${msg.toast.total})`);
+      }
+      updateDockAppearance();
+      sendCameraCommand(sidePanelActive || !settings.enabled ? 'PAUSE_CAMERA' : 'RESUME_CAMERA', {
+        lastCursor: { x: normX, y: normY }
+      });
+      return false;
+    }
+
     if (msg.type === 'SETTINGS_UPDATED') {
       settings = { ...settings, ...msg.settings };
-      if (typeof msg.centralTrackerActive === 'boolean') {
-        centralTrackerActive = msg.centralTrackerActive;
+      if (typeof msg.sidePanelActive === 'boolean') {
+        sidePanelActive = msg.sidePanelActive;
       }
       updateDockAppearance();
       syncCameraFrameState();
-    } else if (msg.type === 'CENTRAL_TRACKER_STATUS') {
-      centralTrackerActive = Boolean(msg.active);
-      if (centralTrackerActive) lastCentralFrameTime = Date.now();
+    } else if (msg.type === 'SIDEPANEL_STATUS') {
+      sidePanelActive = Boolean(msg.active);
       updateDockAppearance();
       syncCameraFrameState();
     } else if (msg.type === 'CAMERA_PERMISSION_READY') {
@@ -764,17 +779,11 @@
       }
       showToast('📷 Live Hand Pointer Connected!');
     } else if (msg.type === 'HAND_FRAME' && msg.payload) {
-      centralTrackerActive = true;
-      lastCentralFrameTime = Date.now();
-      updateDockAppearance();
-      syncCameraFrameState();
       if (msg.payload.landmarks) {
         drawHudSkeleton(msg.payload.landmarks, msg.payload);
       }
       handleHandFrame(msg.payload);
     } else if (msg.type === 'HAND_LOST') {
-      centralTrackerActive = true;
-      lastCentralFrameTime = Date.now();
       drawHudSkeleton(null, {});
       setPointerIdle();
     } else if (msg.type === 'TAB_SWITCHED_TOAST') {
@@ -783,14 +792,11 @@
     return false;
   });
 
-  // Listen for fallback embedded camera_frame.html messages
+  // Listen for direct postMessage from embedded camera_frame.html
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || data.source !== 'HANDFLOW_CAMERA_FRAME') return;
-
-    const centralRecentlyActive =
-      centralTrackerActive && Date.now() - lastCentralFrameTime < 1500;
-    if (centralRecentlyActive) return;
+    if (sidePanelActive) return;
 
     if (data.type === 'HAND_FRAME' && data.payload) {
       handleHandFrame(data.payload);
@@ -1039,17 +1045,32 @@
         window.history.forward();
         break;
       case 'TAB_PREV':
-        chrome.runtime.sendMessage({ type: 'BROWSER_ACTION', action: 'TAB_PREV' });
+        sendCameraCommand('PAUSE_CAMERA');
+        chrome.runtime.sendMessage({
+          type: 'BROWSER_ACTION',
+          action: 'TAB_PREV',
+          lastCursor: { x: normX, y: normY }
+        });
         break;
       case 'TAB_NEXT':
-        chrome.runtime.sendMessage({ type: 'BROWSER_ACTION', action: 'TAB_NEXT' });
+        sendCameraCommand('PAUSE_CAMERA');
+        chrome.runtime.sendMessage({
+          type: 'BROWSER_ACTION',
+          action: 'TAB_NEXT',
+          lastCursor: { x: normX, y: normY }
+        });
         break;
       case 'PLAY_PAUSE':
         togglePageMedia();
         break;
       case 'NEW_TAB':
         showToast('➕ Opening New Tab');
-        chrome.runtime.sendMessage({ type: 'BROWSER_ACTION', action: 'NEW_TAB' });
+        sendCameraCommand('PAUSE_CAMERA');
+        chrome.runtime.sendMessage({
+          type: 'BROWSER_ACTION',
+          action: 'NEW_TAB',
+          lastCursor: { x: normX, y: normY }
+        });
         break;
       case 'RELOAD':
         showToast('🔄 Reloading Page');
@@ -1071,16 +1092,20 @@
     }
 
     mountHost();
+    setCursorFromNormalized(frame.cursor.x, frame.cursor.y);
 
-    screenX = frame.cursor.x * window.innerWidth;
-    screenY = frame.cursor.y * window.innerHeight;
+    const now = performance.now();
+    if (now - lastSyncTime > 250) {
+      lastSyncTime = now;
+      chrome.runtime.sendMessage({
+        type: 'SYNC_CURSOR_POS',
+        cursor: { x: normX, y: normY }
+      }).catch(() => {});
+    }
 
-    // Record trail point & render smooth trail
-    trailPoints.push({ x: screenX, y: screenY, t: performance.now() });
+    trailPoints.push({ x: screenX, y: screenY, t: now });
     drawTrail();
 
-    // Move live pointer
-    cursorEl.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
     cursorEl.classList.remove('idle', 'disabled');
     cursorEl.classList.toggle('pinching', Boolean(frame.isPinching));
     cursorEl.classList.toggle('dragging', Boolean(frame.isDragging));
@@ -1186,12 +1211,22 @@
           }
           case 'TAB_NEXT': {
             showToast('⏭ Switching to Next Tab...');
-            chrome.runtime.sendMessage({ type: 'BROWSER_ACTION', action: 'TAB_NEXT' });
+            sendCameraCommand('PAUSE_CAMERA');
+            chrome.runtime.sendMessage({
+              type: 'BROWSER_ACTION',
+              action: 'TAB_NEXT',
+              lastCursor: { x: normX, y: normY }
+            });
             break;
           }
           case 'TAB_PREV': {
             showToast('⏮ Switching to Previous Tab...');
-            chrome.runtime.sendMessage({ type: 'BROWSER_ACTION', action: 'TAB_PREV' });
+            sendCameraCommand('PAUSE_CAMERA');
+            chrome.runtime.sendMessage({
+              type: 'BROWSER_ACTION',
+              action: 'TAB_PREV',
+              lastCursor: { x: normX, y: normY }
+            });
             break;
           }
           case 'ZOOM_IN':

@@ -1,7 +1,7 @@
 /**
- * HandFlow — Onboarding, Camera Permission & Unthrottled Central Tracker (permission.js)
- * Keeps tracking active even when this tab is in the background so your live pointer
- * runs seamlessly across ANY tab in Chrome.
+ * HandFlow — Onboarding, Camera Permission & Interactive Sandbox (permission.js)
+ * Automatically releases the webcam the instant you switch to another tab so
+ * every tab in Chrome gets immediate access to the camera and live pointer!
  */
 
 import { FilesetResolver, HandLandmarker } from './lib/mediapipe/vision_bundle.mjs';
@@ -49,6 +49,7 @@ dragSlider.addEventListener('input', () => {
 });
 
 openSidePanelBtn.addEventListener('click', async () => {
+  stopSandboxCamera();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (chrome.sidePanel && chrome.sidePanel.open && tab?.windowId) {
     await chrome.sidePanel.open({ windowId: tab.windowId });
@@ -69,10 +70,12 @@ const HAND_CONNECTIONS = [
 let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
 let handLandmarker = null;
+let stream = null;
+let animFrameId = null;
+let retryTimer = null;
 let lastVideoTime = -1;
 let isRunning = false;
-let trackerPort = null;
-let keepAliveAudioCtx = null;
+let permissionGranted = false;
 
 chrome.storage.local.get('settings').then((data) => {
   if (data.settings) {
@@ -88,98 +91,119 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-function enableBackgroundKeepAlive() {
-  // 1. Hold a Web Lock so Chrome never freezes this tab when you switch to other tabs
-  if (navigator.locks && navigator.locks.request) {
-    navigator.locks.request('handflow_background_tracker_lock', () => new Promise(() => {})).catch(() => {});
+// CRITICAL: Release webcam immediately when switching to another tab so the new tab can grab it!
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopSandboxCamera();
+  } else if (permissionGranted && settings.enabled) {
+    startSandboxCamera(0);
   }
-  // 2. Silent WebAudio oscillator prevents background timer throttling
+});
+
+window.addEventListener('pagehide', stopSandboxCamera);
+window.addEventListener('beforeunload', stopSandboxCamera);
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'RELEASE_CAMERA_NOW') {
+    stopSandboxCamera();
+  }
+});
+
+async function initMediaPipe() {
+  if (handLandmarker) return handLandmarker;
+  const wasmPath = chrome.runtime.getURL('lib/mediapipe/wasm');
+  const modelPath = chrome.runtime.getURL('models/hand_landmarker.task');
+  const vision = await FilesetResolver.forVisionTasks(wasmPath);
+
   try {
-    if (!keepAliveAudioCtx) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      keepAliveAudioCtx = new AudioContextClass();
-      const osc = keepAliveAudioCtx.createOscillator();
-      const gain = keepAliveAudioCtx.createGain();
-      gain.gain.value = 0.00001; // Completely inaudible
-      osc.connect(gain);
-      gain.connect(keepAliveAudioCtx.destination);
-      osc.start();
-    } else if (keepAliveAudioCtx.state === 'suspended') {
-      keepAliveAudioCtx.resume().catch(() => {});
-    }
-  } catch (_) {}
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
+      runningMode: 'VIDEO',
+      numHands: 1
+    });
+  } catch (_) {
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
+      runningMode: 'VIDEO',
+      numHands: 1
+    });
+  }
+  return handLandmarker;
 }
 
-function connectTrackerPort() {
-  if (trackerPort) return;
-  try {
-    trackerPort = chrome.runtime.connect({ name: 'handflow-permission-tracker' });
-    trackerPort.onMessage.addListener((msg) => {
-      if (msg?.type === 'UPDATE_SETTINGS' && msg.settings) {
-        settings = { ...DEFAULT_SETTINGS, ...msg.settings };
-        engine.updateSettings(settings);
-      }
-    });
-    trackerPort.onDisconnect.addListener(() => {
-      trackerPort = null;
-      if (isRunning) setTimeout(connectTrackerPort, 500);
-    });
-  } catch (_) {}
-}
+async function startSandboxCamera(retryCount = 0) {
+  if (isRunning || document.hidden) return;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
 
-async function requestCameraAndStart() {
-  if (isRunning) return;
   try {
-    statusMsg.textContent = 'Requesting camera permission...';
-    const stream = await navigator.mediaDevices.getUserMedia({
+    statusMsg.textContent = 'Starting camera...';
+    const newStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } },
       audio: false
     });
 
-    enableBackgroundKeepAlive();
-    connectTrackerPort();
+    if (document.hidden) {
+      newStream.getTracks().forEach((t) => t.stop());
+      return;
+    }
 
+    stream = newStream;
+    permissionGranted = true;
     chrome.runtime.sendMessage({ type: 'CAMERA_PERMISSION_GRANTED' });
 
-    grantAccessBtn.textContent = '✅ Live Pointer Active Across All Tabs!';
+    grantAccessBtn.textContent = '✅ Camera Ready — Works Across All Tabs!';
     grantAccessBtn.classList.add('granted');
     statusMsg.textContent =
-      'Live Pointer is now streaming to ALL tabs! Switch to any tab in Chrome to use your hand pointer.';
+      'Camera permission granted! Switch to ANY tab in Chrome to use your live hand pointer.';
     statusMsg.style.color = '#10b981';
 
     video.srcObject = stream;
     await video.play();
-
-    const wasmPath = chrome.runtime.getURL('lib/mediapipe/wasm');
-    const modelPath = chrome.runtime.getURL('models/hand_landmarker.task');
-    const vision = await FilesetResolver.forVisionTasks(wasmPath);
-
-    try {
-      handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
-        runningMode: 'VIDEO',
-        numHands: 1
-      });
-    } catch (_) {
-      handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
-        runningMode: 'VIDEO',
-        numHands: 1
-      });
-    }
+    await initMediaPipe();
 
     isRunning = true;
-    scheduleNextFrame();
+    lastVideoTime = -1;
+    renderLoop();
   } catch (err) {
-    statusMsg.textContent = `Camera permission needed: Click "Grant Camera Access & Start" and allow camera in the top-left prompt.`;
-    statusMsg.style.color = '#f43f5e';
+    isRunning = false;
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      statusMsg.textContent =
+        'Click "Grant Camera Access & Start" and click Allow in Chrome\'s top-left camera prompt.';
+      statusMsg.style.color = '#f43f5e';
+    } else if (retryCount < 15 && !document.hidden) {
+      retryTimer = setTimeout(() => startSandboxCamera(retryCount + 1), 200);
+    }
   }
 }
 
-grantAccessBtn.addEventListener('click', requestCameraAndStart);
+function stopSandboxCamera() {
+  isRunning = false;
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  if (animFrameId) {
+    cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+  }
+  if (stream) {
+    try {
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (_) {}
+    stream = null;
+  }
+  if (video.srcObject) {
+    video.srcObject = null;
+  }
+  postureBadge.textContent = 'STANDBY (OTHER TAB)';
+}
+
+grantAccessBtn.addEventListener('click', () => startSandboxCamera(0));
 
 function drawPreview(landmarks, result) {
-  if (document.hidden) return; // Skip local canvas redraw when user is on another tab to save GPU
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -214,20 +238,13 @@ function drawPreview(landmarks, result) {
   }
 }
 
-function scheduleNextFrame() {
-  if (!isRunning) return;
-  // Use unthrottled setTimeout when hidden so tracking continues at 42 FPS while browsing other tabs!
-  if (document.hidden) {
-    setTimeout(renderLoop, 22);
-  } else {
-    requestAnimationFrame(renderLoop);
-  }
-}
-
 function renderLoop() {
-  if (!isRunning) return;
-  const now = performance.now();
+  if (!isRunning || document.hidden) {
+    stopSandboxCamera();
+    return;
+  }
 
+  const now = performance.now();
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime && handLandmarker) {
     lastVideoTime = video.currentTime;
     try {
@@ -236,80 +253,53 @@ function renderLoop() {
 
       if (hand) {
         const result = engine.processLandmarks(hand, now);
+        postureBadge.textContent = result.posture;
         drawPreview(hand, result);
 
-        const compactLandmarks = settings.showSkeleton
-          ? hand.map((pt) => ({ x: +pt.x.toFixed(3), y: +pt.y.toFixed(3) }))
-          : null;
+        const cx = result.cursor.x * window.innerWidth;
+        const cy = result.cursor.y * window.innerHeight;
+        sandboxCursor.style.display = 'block';
+        sandboxCursor.style.transform = `translate3d(${cx}px, ${cy}px, 0)`;
+        sandboxCursor.classList.toggle('pinching', Boolean(result.isPinching));
 
-        // Separate browser-level actions from content-script events
-        const contentEvents = [];
         for (const evt of result.events || []) {
-          if (
-            evt.type === 'TAB_NEXT' ||
-            evt.type === 'TAB_PREV' ||
-            evt.type === 'ZOOM_IN' ||
-            evt.type === 'ZOOM_OUT'
-          ) {
-            trackerPort?.postMessage({ type: 'BROWSER_ACTION', action: evt.type });
-          } else {
-            contentEvents.push(evt);
-          }
-        }
+          lastActionPill.textContent = `⚡ ${evt.type}`;
 
-        // Stream live pointer frame to whichever tab the user is currently viewing!
-        trackerPort?.postMessage({
-          type: 'HAND_FRAME',
-          payload: {
-            ...result,
-            events: contentEvents,
-            landmarks: compactLandmarks
-          }
-        });
-
-        // If user is currently viewing this sandbox page, also update local sandbox widgets
-        if (!document.hidden) {
-          postureBadge.textContent = result.posture;
-          const cx = result.cursor.x * window.innerWidth;
-          const cy = result.cursor.y * window.innerHeight;
-          sandboxCursor.style.display = 'block';
-          sandboxCursor.style.transform = `translate3d(${cx}px, ${cy}px, 0)`;
-          sandboxCursor.classList.toggle('pinching', Boolean(result.isPinching));
-
-          for (const evt of result.events || []) {
-            lastActionPill.textContent = `⚡ ${evt.type}`;
-            if (evt.type === 'CLICK') {
-              const el = document.elementFromPoint(cx, cy);
-              el?.click?.();
-            } else if (evt.type === 'DOUBLE_CLICK') {
-              const el = document.elementFromPoint(cx, cy);
-              el?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-            } else if (evt.type === 'DRAG_MOVE') {
-              const rect = dragSlider.getBoundingClientRect();
-              if (cy >= rect.top - 50 && cy <= rect.bottom + 50) {
-                const pct = Math.max(0, Math.min(100, Math.round(((cx - rect.left) / rect.width) * 100)));
-                dragSlider.value = String(pct);
-                sliderValueText.textContent = `Value: ${pct}%`;
-              }
-            } else if (evt.type === 'SCROLL_MOVE') {
-              scrollBox.scrollBy({ top: evt.deltaY });
-              window.scrollBy({ top: evt.deltaY * 0.5 });
+          if (evt.type === 'TAB_NEXT' || evt.type === 'TAB_PREV') {
+            stopSandboxCamera();
+            chrome.runtime.sendMessage({
+              type: 'BROWSER_ACTION',
+              action: evt.type,
+              lastCursor: result.cursor
+            });
+            return;
+          } else if (evt.type === 'CLICK') {
+            const el = document.elementFromPoint(cx, cy);
+            el?.click?.();
+          } else if (evt.type === 'DOUBLE_CLICK') {
+            const el = document.elementFromPoint(cx, cy);
+            el?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+          } else if (evt.type === 'DRAG_MOVE') {
+            const rect = dragSlider.getBoundingClientRect();
+            if (cy >= rect.top - 50 && cy <= rect.bottom + 50) {
+              const pct = Math.max(0, Math.min(100, Math.round(((cx - rect.left) / rect.width) * 100)));
+              dragSlider.value = String(pct);
+              sliderValueText.textContent = `Value: ${pct}%`;
             }
+          } else if (evt.type === 'SCROLL_MOVE') {
+            scrollBox.scrollBy({ top: evt.deltaY });
+            window.scrollBy({ top: evt.deltaY * 0.5 });
           }
         }
       } else {
-        trackerPort?.postMessage({ type: 'HAND_LOST' });
-        if (!document.hidden) {
-          postureBadge.textContent = 'NO HAND';
-          sandboxCursor.style.display = 'none';
-          drawPreview(null, {});
-        }
+        postureBadge.textContent = 'NO HAND';
+        sandboxCursor.style.display = 'none';
+        drawPreview(null, {});
       }
     } catch (_) {}
   }
 
-  scheduleNextFrame();
+  animFrameId = requestAnimationFrame(renderLoop);
 }
 
-// Auto-start if camera permission was already granted
-requestCameraAndStart();
+startSandboxCamera(0);
