@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>HandFlow Camera HUD</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #f8fafc;
+    }
+    .hud-root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at top right, #1e293b, #090d16);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    video {
+      display: none;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .status-bar {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      right: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: #e2e8f0;
+    }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #f59e0b;
+      box-shadow: 0 0 8px #f59e0b;
+    }
+    .dot.active {
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .dot.error {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+    }
+    .posture-pill {
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(79, 70, 229, 0.85);
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .permission-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.94);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      text-align: center;
+      z-index: 10;
+    }
+    .permission-overlay.visible {
+      display: flex;
+    }
+    .permission-overlay h4 {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: #f8fafc;
+    }
+    .permission-overlay p {
+      font-size: 10.5px;
+      color: #94a3b8;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    .btn-grant {
+      appearance: none;
+      border: none;
+      background: linear-gradient(135deg, #4f46e5, #06b6d4);
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+      transition: transform 0.15s ease;
+    }
+    .btn-grant:hover {
+      transform: scale(1.04);
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-root">
+    <div class="status-bar">
+      <div class="badge">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">Starting...</span>
+      </div>
+      <div id="posturePill" class="posture-pill">IDLE</div>
+    </div>
+
+    <video id="webcam" playsinline muted></video>
+    <canvas id="outputCanvas" width="320" height="240"></canvas>
+
+    <div id="permissionOverlay" class="permission-overlay">
+      <h4>Camera Access Needed</h4>
+      <p>Grant one-time camera permission to enable hand gesture control across all tabs.</p>
+      <button id="grantBtn" class="btn-grant">Enable Camera</button>
+    </div>
+  </div>
+  <script type="module" src="camera_frame.js"></script>
+</body>
+</html>
