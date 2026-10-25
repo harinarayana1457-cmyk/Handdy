@@ -5,9 +5,9 @@
  */
 
 (() => {
-  if (typeof window.__HANDDY_CLEANUP__ === "function") {
-    try { window.__HANDDY_CLEANUP__(); } catch (_) {}
-  }
+  if (window.__HANDDY_RUNNING__) return;
+  window.__HANDDY_RUNNING__ = true;
+  let isDestroyed = false;
 
   // Remove any stale host left over from a previous extension reload
   document.querySelectorAll("#handflow-extension-host, #handdy-extension-host, #handdy-extension-host").forEach(el => el.remove());
@@ -505,13 +505,17 @@
   `;
 
   function mountHost() {
+    if (isDestroyed) return;
+    document.querySelectorAll("#handflow-extension-host, #Handdy-extension-host, #handdy-extension-host").forEach((el) => {
+      if (el !== host) el.remove();
+    });
     const container = document.fullscreenElement || document.documentElement;
     if (container && !container.contains(host)) {
       container.appendChild(host);
     }
   }
   mountHost();
-  document.addEventListener('fullscreenchange', mountHost);
+  document.addEventListener("fullscreenchange", mountHost);
 
   const trailCanvas = shadow.getElementById('trailCanvas');
   const trailCtx = trailCanvas.getContext('2d');
@@ -735,7 +739,8 @@
   });
 
   // Listen for tab handoff & frame messages from Background / SidePanel
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  function onRuntimeMessage(msg, _sender, sendResponse) {
+    if (isDestroyed) return false;
     if (!msg || !msg.type) return false;
 
     if (msg.type === 'PING_HANDDY') {
@@ -794,7 +799,8 @@
       showToast(`${msg.direction} (${msg.index}/${msg.total})`);
     }
     return false;
-  });
+  }
+  chrome.runtime.onMessage.addListener(onRuntimeMessage);
 
   // Listen for direct postMessage from embedded camera_frame.html
   function onWindowMessage(event) {
@@ -811,9 +817,13 @@
   window.addEventListener("message", onWindowMessage);
 
   window.__HANDDY_CLEANUP__ = () => {
+    isDestroyed = true;
+    window.__HANDDY_RUNNING__ = false;
+    try { chrome.runtime.onMessage.removeListener(onRuntimeMessage); } catch (_) {}
     window.removeEventListener("message", onWindowMessage);
     document.removeEventListener("fullscreenchange", mountHost);
     window.removeEventListener("resize", resizeTrailCanvas);
+    try { cameraIframe.src = "about:blank"; } catch (_) {}
     host.remove();
   };
 

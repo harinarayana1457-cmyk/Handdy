@@ -30,6 +30,7 @@ let activeTabId = null;
 let previousTabId = null;
 let activeWindowId = null;
 let lastCursor = { x: 0.5, y: 0.5 };
+const injectingTabs = new Set();
 
 async function bootExtension() {
   const stored = await chrome.storage.local.get(['settings', 'cameraPermissionGranted']);
@@ -139,18 +140,23 @@ function isInjectableUrl(url) {
 }
 
 async function ensureContentScriptInTab(tabId) {
+  if (!tabId || injectingTabs.has(tabId)) return;
+  injectingTabs.add(tabId);
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab || !isInjectableUrl(tab.url)) return;
 
-    const response = await chrome.tabs.sendMessage(tabId, { type: 'PING_HANDDY' }).catch(() => null);
+    const response = await chrome.tabs.sendMessage(tabId, { type: "PING_HANDDY" }).catch(() => null);
     if (response?.alive) return;
 
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['content.js']
+      files: ["content.js"]
     });
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    injectingTabs.delete(tabId);
+  }
 }
 
 async function injectIntoAllExistingTabs() {

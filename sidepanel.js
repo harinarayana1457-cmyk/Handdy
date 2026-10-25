@@ -98,7 +98,8 @@ function drawHandTraceOnly(landmarks, result) {
   const h = canvas.height;
 
   // Clean Dark Cyber Grid Background (never draws video feed!)
-  ctx.fillStyle = '#090d16';
+  if (video.readyState >= 2) { ctx.drawImage(video, 0, 0, 1, 1); }
+  ctx.fillStyle = "#090d16";
   ctx.fillRect(0, 0, w, h);
 
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.07)';
