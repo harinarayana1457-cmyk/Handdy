@@ -5,9 +5,19 @@
  */
 
 (() => {
-  if (window.__HANDDY_RUNNING__) return;
+  if (window.__HANDDY_RUNNING__) {
+    try {
+      if (typeof window.__HANDDY_CLEANUP__ === 'function') {
+        window.__HANDDY_CLEANUP__();
+      }
+    } catch (_) {}
+  }
   window.__HANDDY_RUNNING__ = true;
   let isDestroyed = false;
+  const instanceId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  if (document.documentElement) {
+    document.documentElement.dataset.handdyInstanceId = instanceId;
+  }
 
   // Remove any stale host left over from a previous extension reload
   document.querySelectorAll("#handflow-extension-host, #handdy-extension-host, #handdy-extension-host").forEach(el => el.remove());
@@ -504,8 +514,105 @@
     </div>
   `;
 
-  function mountHost() {
+  function isContextValid() {
+    if (isDestroyed) return false;
+    try {
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) return false;
+      if (
+        document.documentElement &&
+        document.documentElement.dataset.handdyInstanceId &&
+        document.documentElement.dataset.handdyInstanceId !== instanceId
+      ) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function selfDestruct() {
     if (isDestroyed) return;
+    isDestroyed = true;
+    window.__HANDDY_RUNNING__ = false;
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+      toastTimeout = null;
+    }
+    try {
+      chrome.runtime.onMessage.removeListener(onRuntimeMessage);
+    } catch (_) {}
+    window.removeEventListener('message', onWindowMessage);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    document.removeEventListener('fullscreenchange', mountHost);
+    window.removeEventListener('resize', resizeTrailCanvas);
+    try {
+      cameraIframe.src = 'about:blank';
+    } catch (_) {}
+    try {
+      host.remove();
+    } catch (_) {}
+  }
+
+  function safeSendMessage(payload, callback) {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
+    try {
+      if (typeof callback === 'function') {
+        chrome.runtime.sendMessage(payload, (res) => {
+          try {
+            if (!isContextValid() || chrome.runtime.lastError) return;
+            callback(res);
+          } catch (_) {
+            selfDestruct();
+          }
+        });
+      } else {
+        const p = chrome.runtime.sendMessage(payload);
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {});
+        }
+      }
+    } catch (_) {
+      selfDestruct();
+    }
+  }
+
+  function safeGetURL(path) {
+    if (!isContextValid()) {
+      selfDestruct();
+      return 'about:blank';
+    }
+    try {
+      return chrome.runtime.getURL(path);
+    } catch (_) {
+      selfDestruct();
+      return 'about:blank';
+    }
+  }
+
+  function safeStorageSet(data) {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
+    try {
+      const p = chrome.storage.local.set(data);
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } catch (_) {
+      selfDestruct();
+    }
+  }
+
+  function mountHost() {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
     document.querySelectorAll("#handflow-extension-host, #Handdy-extension-host, #handdy-extension-host").forEach((el) => {
       if (el !== host) el.remove();
     });
@@ -591,11 +698,11 @@
     const idx = CORNERS.indexOf(settings.hudPosition || 'bottom-right');
     settings.hudPosition = CORNERS[(idx + 1) % CORNERS.length];
     updateDockAppearance();
-    chrome.storage.local.set({ settings });
+    safeStorageSet({ settings });
   });
 
   sidePanelBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' });
+    safeSendMessage({ type: 'OPEN_SIDE_PANEL' });
   });
 
   function updateDockAppearance() {
@@ -720,11 +827,11 @@
     cameraIframe.addEventListener('load', () => {
       syncCameraFrameState();
     });
-    cameraIframe.src = chrome.runtime.getURL('camera_frame.html');
+    cameraIframe.src = safeGetURL('camera_frame.html');
   }
 
-  chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
-    if (chrome.runtime.lastError || !res) return;
+  safeSendMessage({ type: 'GET_STATUS' }, (res) => {
+    if (!res) return;
     settings = { ...settings, ...(res.settings || {}) };
     sidePanelActive = Boolean(res.sidePanelActive);
     if (res.lastCursor && typeof res.lastCursor.x === 'number') {
@@ -734,13 +841,21 @@
     syncCameraFrameState();
   });
 
-  document.addEventListener('visibilitychange', () => {
+  function onVisibilityChange() {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
     syncCameraFrameState();
-  });
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   // Listen for tab handoff & frame messages from Background / SidePanel
   function onRuntimeMessage(msg, _sender, sendResponse) {
-    if (isDestroyed) return false;
+    if (!isContextValid()) {
+      selfDestruct();
+      return false;
+    }
     if (!msg || !msg.type) return false;
 
     if (msg.type === 'PING_HANDDY') {
@@ -784,7 +899,7 @@
       syncCameraFrameState();
     } else if (msg.type === 'CAMERA_PERMISSION_READY') {
       if (!window.location.href.includes('permission.html')) {
-        cameraIframe.src = chrome.runtime.getURL('camera_frame.html');
+        cameraIframe.src = safeGetURL('camera_frame.html');
       }
       showToast('📷 Live Hand Pointer Connected!');
     } else if (msg.type === 'HAND_FRAME' && msg.payload) {
@@ -800,10 +915,20 @@
     }
     return false;
   }
-  chrome.runtime.onMessage.addListener(onRuntimeMessage);
+  try {
+    if (isContextValid()) {
+      chrome.runtime.onMessage.addListener(onRuntimeMessage);
+    }
+  } catch (_) {
+    selfDestruct();
+  }
 
   // Listen for direct postMessage from embedded camera_frame.html
   function onWindowMessage(event) {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
     const data = event.data;
     if (!data || data.source !== 'HANDDY_CAMERA_FRAME') return;
     if (sidePanelActive) return;
@@ -814,18 +939,9 @@
       setPointerIdle();
     }
   }
-  window.addEventListener("message", onWindowMessage);
+  window.addEventListener('message', onWindowMessage);
 
-  window.__HANDDY_CLEANUP__ = () => {
-    isDestroyed = true;
-    window.__HANDDY_RUNNING__ = false;
-    try { chrome.runtime.onMessage.removeListener(onRuntimeMessage); } catch (_) {}
-    window.removeEventListener("message", onWindowMessage);
-    document.removeEventListener("fullscreenchange", mountHost);
-    window.removeEventListener("resize", resizeTrailCanvas);
-    try { cameraIframe.src = "about:blank"; } catch (_) {}
-    host.remove();
-  };
+  window.__HANDDY_CLEANUP__ = selfDestruct;
 
   function setPointerIdle() {
     cursorEl.classList.add('idle');
@@ -1068,7 +1184,7 @@
         break;
       case 'TAB_PREV':
         sendCameraCommand('PAUSE_CAMERA');
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: 'BROWSER_ACTION',
           action: 'TAB_PREV',
           lastCursor: { x: normX, y: normY }
@@ -1076,7 +1192,7 @@
         break;
       case 'TAB_NEXT':
         sendCameraCommand('PAUSE_CAMERA');
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: 'BROWSER_ACTION',
           action: 'TAB_NEXT',
           lastCursor: { x: normX, y: normY }
@@ -1088,7 +1204,7 @@
       case 'NEW_TAB':
         showToast('➕ Opening New Tab');
         sendCameraCommand('PAUSE_CAMERA');
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: 'BROWSER_ACTION',
           action: 'NEW_TAB',
           lastCursor: { x: normX, y: normY }
@@ -1108,6 +1224,10 @@
   }
 
   function handleHandFrame(frame) {
+    if (!isContextValid()) {
+      selfDestruct();
+      return;
+    }
     if (!settings.enabled || !frame.detected) {
       setPointerIdle();
       return;
@@ -1119,10 +1239,10 @@
     const now = performance.now();
     if (now - lastSyncTime > 250) {
       lastSyncTime = now;
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: 'SYNC_CURSOR_POS',
         cursor: { x: normX, y: normY }
-      }).catch(() => {});
+      });
     }
 
     trailPoints.push({ x: screenX, y: screenY, t: now });
@@ -1234,7 +1354,7 @@
           case 'TAB_NEXT': {
             showToast('⏭ Switching to Next Tab...');
             sendCameraCommand('PAUSE_CAMERA');
-            chrome.runtime.sendMessage({
+            safeSendMessage({
               type: 'BROWSER_ACTION',
               action: 'TAB_NEXT',
               lastCursor: { x: normX, y: normY }
@@ -1244,7 +1364,7 @@
           case 'TAB_PREV': {
             showToast('⏮ Switching to Previous Tab...');
             sendCameraCommand('PAUSE_CAMERA');
-            chrome.runtime.sendMessage({
+            safeSendMessage({
               type: 'BROWSER_ACTION',
               action: 'TAB_PREV',
               lastCursor: { x: normX, y: normY }
@@ -1253,7 +1373,7 @@
           }
           case 'ZOOM_IN':
           case 'ZOOM_OUT': {
-            chrome.runtime.sendMessage(
+            safeSendMessage(
               { type: 'BROWSER_ACTION', action: evt.type },
               (res) => {
                 if (res?.zoom) showToast(`🔍 Page Zoom: ${res.zoom}%`);

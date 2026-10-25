@@ -38,7 +38,9 @@ let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
 
 grantBtn.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'OPEN_PERMISSION_PAGE' });
+  try {
+    chrome.runtime.sendMessage({ type: 'OPEN_PERMISSION_PAGE' }).catch(() => {});
+  } catch (_) {}
 });
 
 async function loadSettings() {

@@ -25,7 +25,22 @@ const HAND_CONNECTIONS = [
 
 let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
-const port = chrome.runtime.connect({ name: 'handdy-sidepanel' });
+let port = null;
+try {
+  port = chrome.runtime.connect({ name: 'handdy-sidepanel' });
+  port.onDisconnect.addListener(() => {
+    port = null;
+  });
+} catch (_) {}
+
+function safePortPost(msg) {
+  if (!port) return;
+  try {
+    port.postMessage(msg);
+  } catch (_) {
+    port = null;
+  }
+}
 
 let handLandmarker = null;
 let lastVideoTime = -1;
@@ -188,7 +203,7 @@ function loop() {
         for (const evt of result.events) {
           lastEventText.textContent = `⚡ ${evt.type}`;
           if (evt.type === 'TAB_NEXT' || evt.type === 'TAB_PREV' || evt.type === 'ZOOM_IN' || evt.type === 'ZOOM_OUT') {
-            port.postMessage({ type: 'BROWSER_ACTION', action: evt.type });
+            safePortPost({ type: 'BROWSER_ACTION', action: evt.type });
           }
         }
       }
@@ -204,14 +219,14 @@ function loop() {
           }))
         : null;
 
-      port.postMessage({
+      safePortPost({
         type: 'HAND_FRAME',
         payload: { ...result, events: contentEvents, landmarks: compactLandmarks }
       });
     } else {
       postureTag.textContent = 'NO HAND DETECTED';
       drawHandTraceOnly(null, {});
-      port.postMessage({ type: 'HAND_LOST' });
+      safePortPost({ type: 'HAND_LOST' });
     }
   }
 

@@ -156,7 +156,9 @@ async function startSandboxCamera(retryCount = 0) {
 
     stream = newStream;
     permissionGranted = true;
-    chrome.runtime.sendMessage({ type: 'CAMERA_PERMISSION_GRANTED' });
+    try {
+      chrome.runtime.sendMessage({ type: 'CAMERA_PERMISSION_GRANTED' }).catch(() => {});
+    } catch (_) {}
 
     grantAccessBtn.textContent = '✅ Hand Tracer Active — Works Across All Tabs!';
     grantAccessBtn.classList.add('granted');
@@ -312,11 +314,13 @@ function renderLoop() {
 
           if (evt.type === 'TAB_NEXT' || evt.type === 'TAB_PREV') {
             stopSandboxCamera();
-            chrome.runtime.sendMessage({
-              type: 'BROWSER_ACTION',
-              action: evt.type,
-              lastCursor: result.cursor
-            });
+            try {
+              chrome.runtime.sendMessage({
+                type: 'BROWSER_ACTION',
+                action: evt.type,
+                lastCursor: result.cursor
+              }).catch(() => {});
+            } catch (_) {}
             return;
           } else if (evt.type === 'CLICK') {
             const el = document.elementFromPoint(cx, cy);
