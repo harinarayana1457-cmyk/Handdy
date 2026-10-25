@@ -45,9 +45,9 @@ Touchscreens are inaccessible from across a desk, physical mice cause repetitive
 | **🎯 Knuckle-Anchored Cursor Stabilization** | Tracks a weighted blend of the Index MCP knuckle (`[5]`) and Index Tip (`[8]`) rather than the fingertip alone, eliminating the common "downward cursor dip" that occurs when closing fingers to click. |
 | **⚡ 1-Euro Adaptive Low-Pass Filter** | Dynamically adapts cutoff frequencies based on instantaneous hand speed: freezes micro-tremors when hovering, yet delivers immediate zero-lag response during rapid swiping. |
 | **🧲 Magnetic Target Snap** | Subtly detects nearby interactive DOM elements (`button`, `a[href]`, `input`, `select`, sliders) and gently pulls the cursor toward them, removing the need for millimeter-level precision. |
-| **🔄 Windows Single-Camera Coordinator** | Custom ownership router in `background.js` coordinates stream access between the **Chrome Side Panel**, **Offscreen Document**, and **Permission Sandbox**, preventing Windows webcam device locks (`NotReadableError`). |
+| **🔄 Windows Single-Camera Coordinator** | Custom ownership router in `background.js` coordinates stream access between the **Chrome Side Panel**, **In-Tab Hand Tracer HUD**, and **Permission Sandbox**, preventing Windows webcam device locks (`NotReadableError`). |
 | **🎡 8-Slice Radial Quick Action Wheel** | Triggered by a Rock sign (`🤘`) or Thumb+Middle pinch (`👌`), offering instant one-handed access to *Back*, *Forward*, *Reload*, *New Tab*, *Close Tab*, *Scroll to Top*, *Scroll to Bottom*, and *Full Screen*. |
-| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP camera HUD inside an isolated Shadow DOM (`#Handdy-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
+| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP camera HUD inside an isolated Shadow DOM (`#handdy-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
 | **⌨️ Global Keyboard Hotkey** | Instantly toggle hand tracking ON or OFF from anywhere in Chrome using the configurable shortcut: `Alt + Shift + H`. |
 
 ---
@@ -80,7 +80,7 @@ The following diagram illustrates Handdy's dataflow across the webcam stream, Me
 ```mermaid
 flowchart TD
     subgraph WEBCAM ["📷 Video Stream & Local AI Inference"]
-        CAM["User Webcam (640x480 @ 30-60 FPS)"] --> W1["Offscreen Document (offscreen.html)"]
+        CAM["User Webcam (640x480 @ 30-60 FPS)"] --> W1["In-Tab Hand Tracer HUD (camera_frame.html)"]
         CAM --> W2["Persistent Chrome Side Panel (sidepanel.html)"]
         CAM --> W3["Setup Sandbox (permission.html)"]
         W1 & W2 & W3 --> MP["MediaPipe Hand Landmarker (WASM)"]
@@ -108,7 +108,7 @@ flowchart TD
     end
 
     subgraph DOM ["🖥️ Content Script & Isolated Shadow DOM (content.js)"]
-        ROUTE --> SHADOW["Isolated Shadow DOM Host (#Handdy-extension-host)"]
+        ROUTE --> SHADOW["Isolated Shadow DOM Host (#handdy-extension-host)"]
         SHADOW --> PTR["High-Visibility SVG Cursor & Glowing Trail Canvas"]
         SHADOW --> SNAP["Magnetic Target Snapper (Buttons, Links, Inputs)"]
         SHADOW --> WHEEL["8-Slice Radial Quick Action Wheel"]
@@ -122,7 +122,7 @@ flowchart TD
 ## 🚀 Chrome Installation Guide
 
 ### Prerequisites
-* **Google Chrome** (version 116+ recommended for Manifest V3 SidePanel and Offscreen APIs).
+* **Google Chrome** (version 116+ recommended for Manifest V3 SidePanel API).
 * Built-in webcam or external USB camera.
 
 ### Step-by-Step Setup
@@ -201,8 +201,6 @@ Handdy/
 ├── background.js              # Background service worker, tab messaging & camera ownership
 ├── gesture_engine.js          # Core AI gesture engine, 1-Euro filter & posture classifier
 ├── content.js                 # Shadow DOM cursor renderer, magnetic snap & event dispatcher
-├── offscreen.html             # Offscreen audio/video processing document
-├── offscreen.js               # Offscreen WebAssembly MediaPipe tracker worker
 ├── sidepanel.html             # Persistent side panel interface with live tracking HUD
 ├── sidepanel.js               # Side panel controller & live landmark rendering
 ├── popup.html                 # Extension toolbar popup for quick toggle & settings
@@ -231,7 +229,7 @@ Handdy strictly adheres to Chrome's principle of least privilege:
 
 * **Camera (`navigator.mediaDevices.getUserMedia`)**: Used exclusively for local frame processing by the bundled MediaPipe WebAssembly model. Video frames are processed in-memory frame-by-frame and immediately discarded. No video, images, or telemetry are ever uploaded or transmitted.
 * **Storage (`storage`)**: Saves your personal preferences (sensitivity, smoothing, gestures) locally in `chrome.storage.local`.
-* **Side Panel (`sidePanel`) & Offscreen (`offscreen`)**: Keeps the MediaPipe tracking loop alive across tab transitions without duplicating webcam streams.
+* **Side Panel (`sidePanel`)**: Keeps the MediaPipe tracking loop alive across tab transitions without duplicating webcam streams.
 * **Scripting & Active Tab (`scripting`, `activeTab`, `<all_urls>`)**: Injects the isolated virtual pointer and dispatches synthetic click and scroll events into active web pages.
 
 ---
