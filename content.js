@@ -5,8 +5,11 @@
  */
 
 (() => {
-  if (window.__Handdy_INJECTED__) return;
-  window.__Handdy_INJECTED__ = true;
+  if (window.__HANDDY_INJECTED__) return;
+  window.__HANDDY_INJECTED__ = true;
+
+  // Remove any stale host left over from a previous extension reload
+  document.querySelectorAll("#handflow-extension-host, #handdy-extension-host, #handdy-extension-host").forEach(el => el.remove());
 
   const HAND_CONNECTIONS = [
     [0, 1], [1, 2], [2, 3], [3, 4],
@@ -72,7 +75,7 @@
 
   // Create isolated Shadow DOM host
   const host = document.createElement('div');
-  host.id = 'Handdy-extension-host';
+  host.id = 'handdy-extension-host';
   Object.assign(host.style, {
     position: 'fixed',
     inset: '0',

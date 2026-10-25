@@ -1,7 +1,7 @@
 /**
- * Handdy — In-Page Extension Camera Frame (camera_frame.js)
- * Pre-warms MediaPipe in every tab and performs instant webcam handoff + auto-retry
- * when switching across tabs in Chrome.
+ * Handdy — In-Page Hand Tracer Frame (camera_frame.js)
+ * Processes webcam frames locally in the background and renders ONLY the traced
+ * 21-point 3D hand skeleton on a dark cyber grid (never shows webcam video of face/room).
  */
 
 import { FilesetResolver, HandLandmarker } from './lib/mediapipe/vision_bundle.mjs';
@@ -17,12 +17,12 @@ const permissionOverlay = document.getElementById('permissionOverlay');
 const grantBtn = document.getElementById('grantBtn');
 
 const HAND_CONNECTIONS = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12],
-  [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [17, 18], [18, 19], [19, 20],
-  [0, 17]
+  [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
+  [0, 5], [5, 6], [6, 7], [7, 8],       // Index
+  [5, 9], [9, 10], [10, 11], [11, 12],  // Middle
+  [9, 13], [13, 14], [14, 15], [15, 16],// Ring
+  [13, 17], [17, 18], [18, 19], [19, 20], // Pinky
+  [0, 17]                                // Palm base
 ];
 
 let handLandmarker = null;
@@ -63,7 +63,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// Listen for visibility changes directly inside the iframe as well as messages from parent content.js
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopCamera();
@@ -72,17 +71,12 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-window.addEventListener('pagehide', () => {
-  stopCamera();
-});
-
-window.addEventListener('beforeunload', () => {
-  stopCamera();
-});
+window.addEventListener('pagehide', stopCamera);
+window.addEventListener('beforeunload', stopCamera);
 
 window.addEventListener('message', (event) => {
   const msg = event.data;
-  if (!msg || msg.target !== 'Handdy_CAMERA_FRAME') return;
+  if (!msg || msg.target !== 'HANDDY_CAMERA_FRAME') return;
 
   if (msg.command === 'PAUSE_CAMERA') {
     isPausedByParent = true;
@@ -120,9 +114,9 @@ async function initMediaPipe() {
         },
         runningMode: 'VIDEO',
         numHands: 1,
-        minHandDetectionConfidence: 0.52,
-        minHandPresenceConfidence: 0.52,
-        minTrackingConfidence: 0.52
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
     } catch (_) {
       handLandmarker = await HandLandmarker.createFromOptions(vision, {
@@ -132,9 +126,9 @@ async function initMediaPipe() {
         },
         runningMode: 'VIDEO',
         numHands: 1,
-        minHandDetectionConfidence: 0.52,
-        minHandPresenceConfidence: 0.52,
-        minTrackingConfidence: 0.52
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
     }
     return handLandmarker;
@@ -157,24 +151,22 @@ async function startCamera(retryCount = 0) {
   try {
     await initMediaPipe();
 
-    // Check again in case tab became hidden while MediaPipe was loading
     if (isPausedByParent || document.hidden || !settings.enabled) {
       isStarting = false;
       return;
     }
 
-    statusText.textContent = retryCount > 0 ? `Connecting (${retryCount})...` : 'Opening Cam...';
+    statusText.textContent = retryCount > 0 ? `Connecting (${retryCount})...` : 'Starting...';
 
     const newStream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 320 },
-        height: { ideal: 240 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
         frameRate: { ideal: 30 }
       },
       audio: false
     });
 
-    // If tab was hidden while awaiting getUserMedia, release immediately!
     if (isPausedByParent || document.hidden || !settings.enabled) {
       newStream.getTracks().forEach((t) => t.stop());
       isStarting = false;
@@ -189,8 +181,9 @@ async function startCamera(retryCount = 0) {
     isStarting = false;
     isRunning = true;
     statusDot.className = 'dot active';
-    statusText.textContent = 'Live Tracking';
+    statusText.textContent = 'Hand Tracer';
     lastVideoTime = -1;
+    drawHandTraceOnly(null, {});
     renderLoop();
   } catch (err) {
     isStarting = false;
@@ -202,13 +195,12 @@ async function startCamera(retryCount = 0) {
       permissionOverlay.classList.add('visible');
       window.parent.postMessage(
         {
-          source: 'Handdy_CAMERA_FRAME',
+          source: 'HANDDY_CAMERA_FRAME',
           type: 'PERMISSION_REQUIRED'
         },
         '*'
       );
     } else if (retryCount < 25 && !isPausedByParent && !document.hidden && settings.enabled) {
-      // Camera is being handed off from the previous tab; auto-retry in 180ms!
       statusDot.className = 'dot';
       statusText.textContent = 'Switching Tab...';
       retryTimer = setTimeout(() => startCamera(retryCount + 1), 180);
@@ -244,24 +236,33 @@ function stopCamera() {
   posturePill.textContent = 'STANDBY';
 }
 
-function drawScene(landmarks, result) {
+/**
+ * Draws ONLY the traced 21-point hand skeleton on a dark cyber grid (no webcam video).
+ */
+function drawHandTraceOnly(landmarks, result) {
   const w = canvas.width;
   const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
 
-  ctx.save();
-  if (settings.mirrorCamera) {
-    ctx.translate(w, 0);
-    ctx.scale(-1, 1);
-  }
-  if (video.readyState >= 2) {
-    ctx.drawImage(video, 0, 0, w, h);
-  }
-  ctx.restore();
-
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+  // 1. Clean Dark Cyber Background (never draws video feed!)
+  ctx.fillStyle = '#090d16';
   ctx.fillRect(0, 0, w, h);
 
+  // Subtle coordinate grid lines
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.07)';
+  ctx.lineWidth = 1;
+  const step = 32;
+  ctx.beginPath();
+  for (let x = step; x < w; x += step) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+  }
+  for (let y = step; y < h; y += step) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+
+  // Active tracking zone boundary
   const sens = Math.max(0.6, Math.min(2.5, settings.sensitivity || 1.35));
   const span = Math.min(0.92, Math.max(0.32, 0.85 / sens));
   const bx = ((1.0 - span) / 2) * w;
@@ -269,19 +270,53 @@ function drawScene(landmarks, result) {
   const bw = span * w;
   const bh = span * h;
 
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(99, 102, 241, 0.28)';
   ctx.setLineDash([4, 4]);
   ctx.strokeRect(bx, by, bw, bh);
   ctx.setLineDash([]);
 
-  if (!landmarks || !settings.showSkeleton) return;
+  if (!landmarks) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
+    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🖐️ Raise hand to trace', w / 2, h / 2 + 8);
+    return;
+  }
 
   const mapX = (x) => (settings.mirrorCamera ? (1.0 - x) * w : x * w);
   const mapY = (y) => y * h;
 
-  ctx.strokeStyle = result.isPinching ? '#f43f5e' : result.isScrolling ? '#06b6d4' : '#6366f1';
-  ctx.lineWidth = 2.2;
+  // 2. Translucent Cyber Palm Fill ([0] -> [1] -> [5] -> [9] -> [13] -> [17])
+  const palmIndices = [0, 1, 5, 9, 13, 17];
+  ctx.beginPath();
+  ctx.moveTo(mapX(landmarks[0].x), mapY(landmarks[0].y));
+  for (let i = 1; i < palmIndices.length; i++) {
+    const pt = landmarks[palmIndices[i]];
+    ctx.lineTo(mapX(pt.x), mapY(pt.y));
+  }
+  ctx.closePath();
+  ctx.fillStyle = result.isPinching
+    ? 'rgba(16, 185, 129, 0.18)'
+    : result.isScrolling
+    ? 'rgba(168, 85, 247, 0.18)'
+    : 'rgba(34, 211, 238, 0.14)';
+  ctx.fill();
+
+  // 3. Glowing Hand Skeleton Bones
+  const boneColor = result.isPinching
+    ? '#10b981'
+    : result.isScrolling
+    ? '#a855f7'
+    : '#22d3ee';
+
+  ctx.save();
+  ctx.strokeStyle = boneColor;
+  ctx.shadowColor = boneColor;
+  ctx.shadowBlur = 10;
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
   ctx.beginPath();
   for (const [i, j] of HAND_CONNECTIONS) {
     const a = landmarks[i];
@@ -290,7 +325,19 @@ function drawScene(landmarks, result) {
     ctx.lineTo(mapX(b.x), mapY(b.y));
   }
   ctx.stroke();
+  ctx.restore();
 
+  // 4. Pinch Laser Line between Thumb Tip [4] and Index Tip [8]
+  if (result.pinchRatio < 1.35) {
+    ctx.beginPath();
+    ctx.moveTo(mapX(landmarks[4].x), mapY(landmarks[4].y));
+    ctx.lineTo(mapX(landmarks[8].x), mapY(landmarks[8].y));
+    ctx.strokeStyle = result.isPinching ? '#10b981' : '#f59e0b';
+    ctx.lineWidth = result.isPinching ? 3.5 : 1.8;
+    ctx.stroke();
+  }
+
+  // 5. 21 Hand Joints & Glowing Fingertips
   for (let i = 0; i < landmarks.length; i++) {
     const pt = landmarks[i];
     const px = mapX(pt.x);
@@ -298,7 +345,7 @@ function drawScene(landmarks, result) {
     const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
 
     ctx.beginPath();
-    ctx.arc(px, py, isTip ? 4.2 : 2.5, 0, Math.PI * 2);
+    ctx.arc(px, py, isTip ? 5 : 2.8, 0, Math.PI * 2);
     ctx.fillStyle =
       i === 8
         ? '#22d3ee'
@@ -308,15 +355,15 @@ function drawScene(landmarks, result) {
         ? '#a855f7'
         : '#f8fafc';
     ctx.fill();
-  }
 
-  if (result.pinchRatio < 1.35) {
-    ctx.beginPath();
-    ctx.moveTo(mapX(landmarks[4].x), mapY(landmarks[4].y));
-    ctx.lineTo(mapX(landmarks[8].x), mapY(landmarks[8].y));
-    ctx.strokeStyle = result.isPinching ? '#10b981' : '#f59e0b';
-    ctx.lineWidth = result.isPinching ? 3.5 : 1.8;
-    ctx.stroke();
+    // Extra target ring around Index Pointer Tip [8]
+    if (i === 8) {
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.strokeStyle = result.isPinching ? '#10b981' : '#22d3ee';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 }
 
@@ -338,17 +385,15 @@ function renderLoop() {
       if (hand) {
         const result = engine.processLandmarks(hand, now);
         posturePill.textContent = result.posture;
-        drawScene(hand, result);
+        drawHandTraceOnly(hand, result);
 
-        // If a tab switch gesture was triggered, release our webcam immediately BEFORE switching tabs
-        // so the target tab can open the webcam with zero contention!
         const hasTabSwitch = (result.events || []).some(
           (e) => e.type === 'TAB_NEXT' || e.type === 'TAB_PREV'
         );
 
         window.parent.postMessage(
           {
-            source: 'Handdy_CAMERA_FRAME',
+            source: 'HANDDY_CAMERA_FRAME',
             type: 'HAND_FRAME',
             payload: result
           },
@@ -361,10 +406,10 @@ function renderLoop() {
         }
       } else {
         posturePill.textContent = 'NO HAND';
-        drawScene(null, { isPinching: false, isScrolling: false });
+        drawHandTraceOnly(null, {});
         window.parent.postMessage(
           {
-            source: 'Handdy_CAMERA_FRAME',
+            source: 'HANDDY_CAMERA_FRAME',
             type: 'HAND_LOST'
           },
           '*'
@@ -376,7 +421,7 @@ function renderLoop() {
   animFrameId = requestAnimationFrame(renderLoop);
 }
 
-// Pre-warm MediaPipe immediately and start camera if visible
+drawHandTraceOnly(null, {});
 initMediaPipe();
 loadSettings().then(() => {
   if (settings.enabled && !isPausedByParent && !document.hidden) {

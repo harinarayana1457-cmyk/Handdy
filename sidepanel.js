@@ -1,6 +1,7 @@
 /**
  * Handdy — Persistent Side Panel Controller (sidepanel.js)
- * Keeps camera & MediaPipe running uninterrupted across all tab switches and URLs.
+ * Keeps hand tracking running uninterrupted across all tab switches and renders
+ * ONLY the traced 21-point hand skeleton on a dark cyber grid (no webcam video).
  */
 
 import { FilesetResolver, HandLandmarker } from './lib/mediapipe/vision_bundle.mjs';
@@ -24,7 +25,7 @@ const HAND_CONNECTIONS = [
 
 let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
-const port = chrome.runtime.connect({ name: 'Handdy-sidepanel' });
+const port = chrome.runtime.connect({ name: 'handdy-sidepanel' });
 
 let handLandmarker = null;
 let lastVideoTime = -1;
@@ -47,7 +48,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 async function startSidePanelTracker() {
   try {
-    fpsBadge.textContent = 'Loading Model...';
+    fpsBadge.textContent = 'Loading AI...';
     const wasmPath = chrome.runtime.getURL('lib/mediapipe/wasm');
     const modelPath = chrome.runtime.getURL('models/hand_landmarker.task');
 
@@ -57,27 +58,31 @@ async function startSidePanelTracker() {
         baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
         runningMode: 'VIDEO',
         numHands: 1,
-        minHandDetectionConfidence: 0.55,
-        minHandPresenceConfidence: 0.55,
-        minTrackingConfidence: 0.55
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
     } catch (_) {
       handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
         runningMode: 'VIDEO',
-        numHands: 1
+        numHands: 1,
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 400 }, height: { ideal: 300 }, frameRate: { ideal: 30 } },
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
       audio: false
     });
 
     video.srcObject = stream;
     await video.play();
+    drawHandTraceOnly(null, {});
     requestAnimationFrame(loop);
-  } catch (err) {
+  } catch (_) {
     fpsBadge.textContent = 'Camera Needed';
     lastEventText.textContent = 'Click here to grant camera permission';
     lastEventText.style.cursor = 'pointer';
@@ -88,39 +93,73 @@ async function startSidePanelTracker() {
   }
 }
 
-function drawCanvas(landmarks, result) {
+function drawHandTraceOnly(landmarks, result) {
   const w = canvas.width;
   const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
 
-  ctx.save();
-  if (settings.mirrorCamera) {
-    ctx.translate(w, 0);
-    ctx.scale(-1, 1);
-  }
-  if (video.readyState >= 2) {
-    ctx.drawImage(video, 0, 0, w, h);
-  }
-  ctx.restore();
+  // Clean Dark Cyber Grid Background (never draws video feed!)
+  ctx.fillStyle = '#090d16';
+  ctx.fillRect(0, 0, w, h);
 
-  if (!landmarks) return;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.07)';
+  ctx.lineWidth = 1;
+  const step = 36;
+  ctx.beginPath();
+  for (let x = step; x < w; x += step) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+  }
+  for (let y = step; y < h; y += step) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+
+  if (!landmarks) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🖐️ Raise hand to trace', w / 2, h / 2);
+    return;
+  }
 
   const mapX = (x) => (settings.mirrorCamera ? (1.0 - x) * w : x * w);
   const mapY = (y) => y * h;
 
-  ctx.strokeStyle = result.isPinching ? '#10b981' : '#38bdf8';
-  ctx.lineWidth = 2.5;
+  const palmIndices = [0, 1, 5, 9, 13, 17];
+  ctx.beginPath();
+  ctx.moveTo(mapX(landmarks[0].x), mapY(landmarks[0].y));
+  for (let i = 1; i < palmIndices.length; i++) {
+    const pt = landmarks[palmIndices[i]];
+    ctx.lineTo(mapX(pt.x), mapY(pt.y));
+  }
+  ctx.closePath();
+  ctx.fillStyle = result.isPinching
+    ? 'rgba(16, 185, 129, 0.18)'
+    : 'rgba(34, 211, 238, 0.14)';
+  ctx.fill();
+
+  const boneColor = result.isPinching ? '#10b981' : '#38bdf8';
+  ctx.save();
+  ctx.strokeStyle = boneColor;
+  ctx.shadowColor = boneColor;
+  ctx.shadowBlur = 12;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   ctx.beginPath();
   for (const [i, j] of HAND_CONNECTIONS) {
     ctx.moveTo(mapX(landmarks[i].x), mapY(landmarks[i].y));
     ctx.lineTo(mapX(landmarks[j].x), mapY(landmarks[j].y));
   }
   ctx.stroke();
+  ctx.restore();
 
   for (let i = 0; i < landmarks.length; i++) {
+    const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
     ctx.beginPath();
-    ctx.arc(mapX(landmarks[i].x), mapY(landmarks[i].y), i === 8 || i === 4 ? 5 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = i === 8 ? '#22d3ee' : i === 4 ? '#f43f5e' : '#ffffff';
+    ctx.arc(mapX(landmarks[i].x), mapY(landmarks[i].y), isTip ? 5.5 : 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = i === 8 ? '#22d3ee' : i === 4 ? '#f43f5e' : isTip ? '#a855f7' : '#ffffff';
     ctx.fill();
   }
 }
@@ -142,9 +181,8 @@ function loop() {
     if (hand) {
       const result = engine.processLandmarks(hand, now);
       postureTag.textContent = result.posture;
-      drawCanvas(hand, result);
+      drawHandTraceOnly(hand, result);
 
-      // Handle browser-level tab/zoom events directly in Side Panel so they even work on chrome:// tabs!
       if (Array.isArray(result.events)) {
         for (const evt of result.events) {
           lastEventText.textContent = `⚡ ${evt.type}`;
@@ -154,7 +192,6 @@ function loop() {
         }
       }
 
-      // Filter out TAB_NEXT/TAB_PREV/ZOOM from content script payload so they aren't double-triggered
       const contentEvents = (result.events || []).filter(
         (e) => e.type !== 'TAB_NEXT' && e.type !== 'TAB_PREV' && e.type !== 'ZOOM_IN' && e.type !== 'ZOOM_OUT'
       );
@@ -172,7 +209,7 @@ function loop() {
       });
     } else {
       postureTag.textContent = 'NO HAND DETECTED';
-      drawCanvas(null, {});
+      drawHandTraceOnly(null, {});
       port.postMessage({ type: 'HAND_LOST' });
     }
   }
@@ -180,4 +217,5 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
+drawHandTraceOnly(null, {});
 startSidePanelTracker();

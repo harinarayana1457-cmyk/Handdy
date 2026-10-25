@@ -1,7 +1,6 @@
 /**
  * Handdy — Onboarding, Camera Permission & Interactive Sandbox (permission.js)
- * Automatically releases the webcam the instant you switch to another tab so
- * every tab in Chrome gets immediate access to the camera and live pointer!
+ * Renders ONLY the traced 21-point hand skeleton on a dark cyber grid (never shows webcam video).
  */
 
 import { FilesetResolver, HandLandmarker } from './lib/mediapipe/vision_bundle.mjs';
@@ -91,7 +90,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// CRITICAL: Release webcam immediately when switching to another tab so the new tab can grab it!
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopSandboxCamera();
@@ -119,13 +117,19 @@ async function initMediaPipe() {
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
       runningMode: 'VIDEO',
-      numHands: 1
+      numHands: 1,
+      minHandDetectionConfidence: 0.4,
+      minHandPresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4
     });
   } catch (_) {
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
       runningMode: 'VIDEO',
-      numHands: 1
+      numHands: 1,
+      minHandDetectionConfidence: 0.4,
+      minHandPresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4
     });
   }
   return handLandmarker;
@@ -139,9 +143,9 @@ async function startSandboxCamera(retryCount = 0) {
   }
 
   try {
-    statusMsg.textContent = 'Starting camera...';
+    statusMsg.textContent = 'Starting hand tracer...';
     const newStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } },
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
       audio: false
     });
 
@@ -154,10 +158,10 @@ async function startSandboxCamera(retryCount = 0) {
     permissionGranted = true;
     chrome.runtime.sendMessage({ type: 'CAMERA_PERMISSION_GRANTED' });
 
-    grantAccessBtn.textContent = '✅ Camera Ready — Works Across All Tabs!';
+    grantAccessBtn.textContent = '✅ Hand Tracer Active — Works Across All Tabs!';
     grantAccessBtn.classList.add('granted');
     statusMsg.textContent =
-      'Camera permission granted! Switch to ANY tab in Chrome to use your live hand pointer.';
+      'Camera permission granted! Only your 3D hand skeleton is traced (video feed is never shown).';
     statusMsg.style.color = '#10b981';
 
     video.srcObject = stream;
@@ -166,6 +170,7 @@ async function startSandboxCamera(retryCount = 0) {
 
     isRunning = true;
     lastVideoTime = -1;
+    drawHandTraceOnly(null, {});
     renderLoop();
   } catch (err) {
     isRunning = false;
@@ -203,37 +208,76 @@ function stopSandboxCamera() {
 
 grantAccessBtn.addEventListener('click', () => startSandboxCamera(0));
 
-function drawPreview(landmarks, result) {
+function drawHandTraceOnly(landmarks, result) {
   const w = canvas.width;
   const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
 
-  ctx.save();
-  ctx.translate(w, 0);
-  ctx.scale(-1, 1);
-  if (video.readyState >= 2) {
-    ctx.drawImage(video, 0, 0, w, h);
+  // Clean Dark Cyber Grid Background (never draws video feed!)
+  ctx.fillStyle = '#090d16';
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.07)';
+  ctx.lineWidth = 1;
+  const step = 36;
+  ctx.beginPath();
+  for (let x = step; x < w; x += step) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
   }
-  ctx.restore();
+  for (let y = step; y < h; y += step) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+  }
+  ctx.stroke();
 
-  if (!landmarks) return;
+  if (!landmarks) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🖐️ Raise your hand in front of the camera to trace', w / 2, h / 2);
+    return;
+  }
 
   const mapX = (x) => (1.0 - x) * w;
   const mapY = (y) => y * h;
 
-  ctx.strokeStyle = result.isPinching ? '#10b981' : '#38bdf8';
-  ctx.lineWidth = 2.5;
+  // Translucent Palm Fill
+  const palmIndices = [0, 1, 5, 9, 13, 17];
+  ctx.beginPath();
+  ctx.moveTo(mapX(landmarks[0].x), mapY(landmarks[0].y));
+  for (let i = 1; i < palmIndices.length; i++) {
+    const pt = landmarks[palmIndices[i]];
+    ctx.lineTo(mapX(pt.x), mapY(pt.y));
+  }
+  ctx.closePath();
+  ctx.fillStyle = result.isPinching
+    ? 'rgba(16, 185, 129, 0.18)'
+    : 'rgba(34, 211, 238, 0.14)';
+  ctx.fill();
+
+  const boneColor = result.isPinching ? '#10b981' : '#38bdf8';
+  ctx.save();
+  ctx.strokeStyle = boneColor;
+  ctx.shadowColor = boneColor;
+  ctx.shadowBlur = 12;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   ctx.beginPath();
   for (const [i, j] of HAND_CONNECTIONS) {
     ctx.moveTo(mapX(landmarks[i].x), mapY(landmarks[i].y));
     ctx.lineTo(mapX(landmarks[j].x), mapY(landmarks[j].y));
   }
   ctx.stroke();
+  ctx.restore();
 
   for (let i = 0; i < landmarks.length; i++) {
+    const px = mapX(landmarks[i].x);
+    const py = mapY(landmarks[i].y);
+    const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
     ctx.beginPath();
-    ctx.arc(mapX(landmarks[i].x), mapY(landmarks[i].y), i === 8 || i === 4 ? 5 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = i === 8 ? '#22d3ee' : i === 4 ? '#f43f5e' : '#fff';
+    ctx.arc(px, py, isTip ? 5.5 : 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = i === 8 ? '#22d3ee' : i === 4 ? '#f43f5e' : isTip ? '#a855f7' : '#fff';
     ctx.fill();
   }
 }
@@ -254,7 +298,7 @@ function renderLoop() {
       if (hand) {
         const result = engine.processLandmarks(hand, now);
         postureBadge.textContent = result.posture;
-        drawPreview(hand, result);
+        drawHandTraceOnly(hand, result);
 
         const cx = result.cursor.x * window.innerWidth;
         const cy = result.cursor.y * window.innerHeight;
@@ -294,7 +338,7 @@ function renderLoop() {
       } else {
         postureBadge.textContent = 'NO HAND';
         sandboxCursor.style.display = 'none';
-        drawPreview(null, {});
+        drawHandTraceOnly(null, {});
       }
     } catch (_) {}
   }
@@ -302,4 +346,5 @@ function renderLoop() {
   animFrameId = requestAnimationFrame(renderLoop);
 }
 
+drawHandTraceOnly(null, {});
 startSandboxCamera(0);
