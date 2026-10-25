@@ -1,12 +1,12 @@
 /**
- * HandFlow — Universal Cross-Tab Live Pointer & Gesture Content Script (content.js)
+ * Handdy — Universal Cross-Tab Live Pointer & Gesture Content Script (content.js)
  * Renders an always-on, high-visibility Live Pointer + Trail + Camera HUD on ANY Chrome tab,
  * with instant webcam handoff and cursor position continuity across tab switches.
  */
 
 (() => {
-  if (window.__HANDFLOW_INJECTED__) return;
-  window.__HANDFLOW_INJECTED__ = true;
+  if (window.__Handdy_INJECTED__) return;
+  window.__Handdy_INJECTED__ = true;
 
   const HAND_CONNECTIONS = [
     [0, 1], [1, 2], [2, 3], [3, 4],
@@ -72,7 +72,7 @@
 
   // Create isolated Shadow DOM host
   const host = document.createElement('div');
-  host.id = 'handflow-extension-host';
+  host.id = 'Handdy-extension-host';
   Object.assign(host.style, {
     position: 'fixed',
     inset: '0',
@@ -485,7 +485,7 @@
       <div class="hf-dock-header">
         <div class="hf-dock-title">
           <span class="hf-live-dot"></span>
-          <span>HandFlow Live</span>
+          <span>Handdy Live</span>
         </div>
         <div class="hf-dock-actions">
           <button id="cornerBtn" class="hf-dock-btn" title="Move Corner">✥</button>
@@ -692,7 +692,7 @@
     if (!cameraIframe.contentWindow) return;
     cameraIframe.contentWindow.postMessage(
       {
-        target: 'HANDFLOW_CAMERA_FRAME',
+        target: 'Handdy_CAMERA_FRAME',
         command,
         ...extra
       },
@@ -734,7 +734,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return false;
 
-    if (msg.type === 'PING_HANDFLOW') {
+    if (msg.type === 'PING_Handdy') {
       sendResponse({ alive: true });
       return false;
     }
@@ -795,7 +795,7 @@
   // Listen for direct postMessage from embedded camera_frame.html
   window.addEventListener('message', (event) => {
     const data = event.data;
-    if (!data || data.source !== 'HANDFLOW_CAMERA_FRAME') return;
+    if (!data || data.source !== 'Handdy_CAMERA_FRAME') return;
     if (sidePanelActive) return;
 
     if (data.type === 'HAND_FRAME' && data.payload) {

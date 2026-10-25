@@ -1,5 +1,5 @@
 /**
- * HandFlow — Background Service Worker (background.js)
+ * Handdy — Background Service Worker (background.js)
  * Guarantees seamless cross-tab functionality by:
  * 1. Auto-injecting content.js into ALL open tabs on startup/install and tab switch
  * 2. Orchestrating instant webcam handoff (RELEASE_CAMERA_NOW -> ACTIVATE_TAB_CAMERA)
@@ -143,7 +143,7 @@ async function ensureContentScriptInTab(tabId) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab || !isInjectableUrl(tab.url)) return;
 
-    const response = await chrome.tabs.sendMessage(tabId, { type: 'PING_HANDFLOW' }).catch(() => null);
+    const response = await chrome.tabs.sendMessage(tabId, { type: 'PING_Handdy' }).catch(() => null);
     if (response?.alive) return;
 
     await chrome.scripting.executeScript({
@@ -223,7 +223,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // Persistent Side Panel connection
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'handflow-sidepanel') {
+  if (port.name === 'Handdy-sidepanel') {
     sidePanelPort = port;
     broadcastToTabs({ type: 'SIDEPANEL_STATUS', active: true });
 

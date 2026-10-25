@@ -1,5 +1,5 @@
 /**
- * HandFlow — Persistent Side Panel Controller (sidepanel.js)
+ * Handdy — Persistent Side Panel Controller (sidepanel.js)
  * Keeps camera & MediaPipe running uninterrupted across all tab switches and URLs.
  */
 
@@ -24,7 +24,7 @@ const HAND_CONNECTIONS = [
 
 let settings = { ...DEFAULT_SETTINGS };
 const engine = new GestureEngine(settings);
-const port = chrome.runtime.connect({ name: 'handflow-sidepanel' });
+const port = chrome.runtime.connect({ name: 'Handdy-sidepanel' });
 
 let handLandmarker = null;
 let lastVideoTime = -1;

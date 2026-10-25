@@ -1,5 +1,5 @@
 /**
- * HandFlow — Onboarding, Camera Permission & Interactive Sandbox (permission.js)
+ * Handdy — Onboarding, Camera Permission & Interactive Sandbox (permission.js)
  * Automatically releases the webcam the instant you switch to another tab so
  * every tab in Chrome gets immediate access to the camera and live pointer!
  */

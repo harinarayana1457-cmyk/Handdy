@@ -1,5 +1,5 @@
 /**
- * HandFlow — Popup Controller (popup.js)
+ * Handdy — Popup Controller (popup.js)
  */
 
 import { DEFAULT_SETTINGS } from './gesture_engine.js';

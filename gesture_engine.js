@@ -1,5 +1,5 @@
 /**
- * HandFlow — Scale-Invariant Hand Gesture & Air-Mouse Engine
+ * Handdy — Scale-Invariant Hand Gesture & Air-Mouse Engine
  * Uses 1-Euro adaptive filtering, palm-size normalization, and pre-pinch cursor stabilization.
  */
 

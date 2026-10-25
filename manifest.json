@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "HandFlow — Hand Gesture Mouse & Browser Controller",
-  "short_name": "HandFlow",
+  "name": "Handdy — Hand Gesture Mouse & Browser Controller",
+  "short_name": "Handdy",
   "version": "1.2.0",
   "description": "Live hand-tracked mouse pointer across all Chrome tabs: point, click, drag, scroll, switch tabs, zoom, and control media with hand gestures.",
   "permissions": [
@@ -20,7 +20,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "HandFlow — Hand Gesture Control",
+    "default_title": "Handdy — Hand Gesture Control",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -42,7 +42,7 @@
         "default": "Alt+Shift+H",
         "mac": "Alt+Shift+H"
       },
-      "description": "Toggle HandFlow Gesture Control On/Off"
+      "description": "Toggle Handdy Gesture Control On/Off"
     }
   },
   "content_scripts": [

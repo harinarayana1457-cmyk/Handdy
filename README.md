@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🖐️ Handdy (HandFlow)
+# 🖐️ Handdy
 ### Universal Hand-Tracked Air Mouse & Gesture Controller for Google Chrome
 
 A production-grade **Chrome Extension (Manifest V3)** powered by **MediaPipe Hand Landmarker** (`@mediapipe/tasks-vision` on-device WebAssembly). Replaces physical mice with natural hand gestures—point, click, double-click, drag-and-drop, scroll, swipe between tabs, zoom, clutch, and control media across every Chrome tab with zero cloud latency.
@@ -33,7 +33,7 @@ A production-grade **Chrome Extension (Manifest V3)** powered by **MediaPipe Han
 
 Touchscreens are inaccessible from across a desk, physical mice cause repetitive strain during extended reading, and presenting slides or watching cooking videos while your hands are messy requires awkward pauses.
 
-**Handdy (HandFlow)** transforms any standard laptop webcam or USB camera into a high-precision, contactless spatial mouse. Running a custom-quantized **MediaPipe Hand Landmarker** model entirely in local WebAssembly, Handdy extracts **21 3D skeletal hand landmarks** at 30–60 FPS. It applies **1-Euro adaptive low-pass filtering**, **knuckle-anchored position tracking**, and **magnetic target snapping** to deliver fluid, jitter-free cursor control that feels as natural and reliable as a physical mouse—without transmitting a single pixel or video frame over the network.
+**Handdy** transforms any standard laptop webcam or USB camera into a high-precision, contactless spatial mouse. Running a custom-quantized **MediaPipe Hand Landmarker** model entirely in local WebAssembly, Handdy extracts **21 3D skeletal hand landmarks** at 30–60 FPS. It applies **1-Euro adaptive low-pass filtering**, **knuckle-anchored position tracking**, and **magnetic target snapping** to deliver fluid, jitter-free cursor control that feels as natural and reliable as a physical mouse—without transmitting a single pixel or video frame over the network.
 
 ---
 
@@ -47,7 +47,7 @@ Touchscreens are inaccessible from across a desk, physical mice cause repetitive
 | **🧲 Magnetic Target Snap** | Subtly detects nearby interactive DOM elements (`button`, `a[href]`, `input`, `select`, sliders) and gently pulls the cursor toward them, removing the need for millimeter-level precision. |
 | **🔄 Windows Single-Camera Coordinator** | Custom ownership router in `background.js` coordinates stream access between the **Chrome Side Panel**, **Offscreen Document**, and **Permission Sandbox**, preventing Windows webcam device locks (`NotReadableError`). |
 | **🎡 8-Slice Radial Quick Action Wheel** | Triggered by a Rock sign (`🤘`) or Thumb+Middle pinch (`👌`), offering instant one-handed access to *Back*, *Forward*, *Reload*, *New Tab*, *Close Tab*, *Scroll to Top*, *Scroll to Bottom*, and *Full Screen*. |
-| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP camera HUD inside an isolated Shadow DOM (`#handflow-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
+| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP camera HUD inside an isolated Shadow DOM (`#Handdy-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
 | **⌨️ Global Keyboard Hotkey** | Instantly toggle hand tracking ON or OFF from anywhere in Chrome using the configurable shortcut: `Alt + Shift + H`. |
 
 ---
@@ -108,7 +108,7 @@ flowchart TD
     end
 
     subgraph DOM ["🖥️ Content Script & Isolated Shadow DOM (content.js)"]
-        ROUTE --> SHADOW["Isolated Shadow DOM Host (#handflow-extension-host)"]
+        ROUTE --> SHADOW["Isolated Shadow DOM Host (#Handdy-extension-host)"]
         SHADOW --> PTR["High-Visibility SVG Cursor & Glowing Trail Canvas"]
         SHADOW --> SNAP["Magnetic Target Snapper (Buttons, Links, Inputs)"]
         SHADOW --> WHEEL["8-Slice Radial Quick Action Wheel"]
@@ -141,7 +141,7 @@ flowchart TD
    - Select the cloned `Handdy` root folder containing `manifest.json`.
 
 4. **Grant Camera Permission**:
-   - The **HandFlow Setup & Gesture Sandbox** page (`permission.html`) will automatically launch on first install.
+   - The **Handdy Setup & Gesture Sandbox** page (`permission.html`) will automatically launch on first install.
    - Click **"📷 Grant Camera Access & Start"** and allow camera permissions in Chrome.
 
 5. **Start Browsing Hands-Free**:

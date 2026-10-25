@@ -1,5 +1,5 @@
 /**
- * HandFlow — In-Page Extension Camera Frame (camera_frame.js)
+ * Handdy — In-Page Extension Camera Frame (camera_frame.js)
  * Pre-warms MediaPipe in every tab and performs instant webcam handoff + auto-retry
  * when switching across tabs in Chrome.
  */
@@ -82,7 +82,7 @@ window.addEventListener('beforeunload', () => {
 
 window.addEventListener('message', (event) => {
   const msg = event.data;
-  if (!msg || msg.target !== 'HANDFLOW_CAMERA_FRAME') return;
+  if (!msg || msg.target !== 'Handdy_CAMERA_FRAME') return;
 
   if (msg.command === 'PAUSE_CAMERA') {
     isPausedByParent = true;
@@ -202,7 +202,7 @@ async function startCamera(retryCount = 0) {
       permissionOverlay.classList.add('visible');
       window.parent.postMessage(
         {
-          source: 'HANDFLOW_CAMERA_FRAME',
+          source: 'Handdy_CAMERA_FRAME',
           type: 'PERMISSION_REQUIRED'
         },
         '*'
@@ -348,7 +348,7 @@ function renderLoop() {
 
         window.parent.postMessage(
           {
-            source: 'HANDFLOW_CAMERA_FRAME',
+            source: 'Handdy_CAMERA_FRAME',
             type: 'HAND_FRAME',
             payload: result
           },
@@ -364,7 +364,7 @@ function renderLoop() {
         drawScene(null, { isPinching: false, isScrolling: false });
         window.parent.postMessage(
           {
-            source: 'HANDFLOW_CAMERA_FRAME',
+            source: 'Handdy_CAMERA_FRAME',
             type: 'HAND_LOST'
           },
           '*'
