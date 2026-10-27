@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Handdy — Hand Gesture Mouse & Browser Controller",
   "short_name": "Handdy",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Live hand-tracked mouse pointer across all Chrome tabs: point, click, drag, scroll, switch tabs, zoom, and control media with hand gestures.",
   "permissions": [
     "storage",

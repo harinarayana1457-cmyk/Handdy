@@ -47,7 +47,9 @@ Touchscreens are inaccessible from across a desk, physical mice cause repetitive
 | **🧲 Magnetic Target Snap** | Subtly detects nearby interactive DOM elements (`button`, `a[href]`, `input`, `select`, sliders) and gently pulls the cursor toward them, removing the need for millimeter-level precision. |
 | **🔄 Windows Single-Camera Coordinator** | Custom ownership router in `background.js` coordinates stream access between the **Chrome Side Panel**, **In-Tab Hand Tracer HUD**, and **Permission Sandbox**, preventing Windows webcam device locks (`NotReadableError`). |
 | **🎡 8-Slice Radial Quick Action Wheel** | Triggered by a Rock sign (`🤘`) or Thumb+Middle pinch (`👌`), offering instant one-handed access to *Back*, *Forward*, *Reload*, *New Tab*, *Close Tab*, *Scroll to Top*, *Scroll to Bottom*, and *Full Screen*. |
-| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP camera HUD inside an isolated Shadow DOM (`#handdy-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
+| **🛡️ Isolated Shadow DOM Injection** | Renders the custom SVG pointer, glowing particle trail, and PiP Hand Tracer HUD inside an isolated Shadow DOM (`#handdy-extension-host`) with `z-index: 2147483647`, preventing CSS style contamination on any website. |
+| **🕵️ Hand-Trace-Only Cyber HUD** | The in-page HUD, Side Panel, and Setup Sandbox render **only** your 21-point 3D hand skeleton on a dark cyber grid (`#090d16`)—never displaying the raw webcam video feed of your face or room. |
+| **♻️ Hot-Reload Context Guard** | Automatic content-script instance token verification and self-destruct cleanup prevent duplicate pointers or `Extension context invalidated` errors when reloading the extension across open tabs. |
 | **⌨️ Global Keyboard Hotkey** | Instantly toggle hand tracking ON or OFF from anywhere in Chrome using the configurable shortcut: `Alt + Shift + H`. |
 
 ---
